@@ -9,7 +9,7 @@ Feature: Draw Request
     When busco y accedo al lender "2001670" desde admin
     When cierro el popup si está presente
 
-  @drawrequest  @ui
+  @drawrequest  @ui @ci
   Scenario: Crear un DrawLoan Request y verificar la grilla
     When navego a Draw Request
     And abro el modal de New DrawLoan

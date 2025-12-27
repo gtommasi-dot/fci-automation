@@ -1,5 +1,5 @@
 # tests/features/GeneralNavBlis.feature
-@ui @blisnav
+@ui @blisnav @ci
 Feature: General navigation through BLIS as borrower
   In order to access all borrower loan information
   As a borrower user

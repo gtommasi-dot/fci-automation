@@ -1,4 +1,4 @@
-@ui @boardinge2e @ci
+@ui @boardinge2e @e2e
 Feature: Boarding end-to-end (crear y migrar)
 
   Background:

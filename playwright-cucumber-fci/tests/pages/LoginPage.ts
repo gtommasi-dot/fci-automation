@@ -79,7 +79,7 @@ export class LoginPage {
     await adminPage.locator('tbody.k-table-tbody tr').first().waitFor({ state: 'visible', timeout: 20000 });
 
     // 3) Buscar fila por Type = "Verification Code to login" y abrir modal (doble click)
-    const row = adminPage.locator('tbody.k-table-tbody tr', { hasText: 'Verification Code to login' }).first();
+    const row = adminPage.locator('tbody.k-table-tbody tr', { hasText: 'FCI Verification Code' }).first();
     await row.waitFor({ state: 'visible', timeout: 20000 });
     await row.dblclick();
 

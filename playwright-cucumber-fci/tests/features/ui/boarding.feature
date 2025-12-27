@@ -6,7 +6,7 @@ Feature: Crear nuevo Boarding Portfolio
     When busco y accedo al lender "2001670" desde admin
     When cierro el popup si está presente
 
-  @boarding   
+  @boarding   @ci
   Scenario: Creación exitosa de un Boarding Portfolio
     When navego a la sección de Boarding Portfolio
     And inicio el proceso de nuevo boarding
