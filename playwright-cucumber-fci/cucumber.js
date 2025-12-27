@@ -7,15 +7,17 @@ const common = [
   'tests/features/**/*.feature',
 ];
 
-if (process.env.CUCUMBER_TAGS && process.env.CUCUMBER_TAGS.trim() !== '') {
-  common.push(`--tags "${process.env.CUCUMBER_TAGS}"`);
+// Tags (robusto para Windows + expresiones con espacios)
+const rawTags = process.env.CUCUMBER_TAGS?.trim();
+if (rawTags) {
+  common.push(`--tags ${JSON.stringify(rawTags)}`);
 }
 
-// ReportPortal
+// ReportPortal (solo cuando RP_ENABLE=true)
 if ((process.env.RP_ENABLE || '').toLowerCase() === 'true') {
   common.push('--format ./reportportal-formatter.cjs');
 }
 
 module.exports = {
-  default: common.join(' ')
+  default: common.join(' '),
 };
