@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       cucumber_tags:
-        description: "@ci"
+        description: "Tags de Cucumber (ej: @ci, @ci and @boarding, @ui and not @wip)"
         required: false
-        default: ""
+        default: "@ci"
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -86,7 +86,7 @@ jobs:
           SAVE_TRACE_ON_FAIL: "true"
 
           # --- Tags (solo manual dispatch) ---
-          CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '' }}
+          CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '@ci' }}
 
           # --- AI triage OFF en CI ---
           AI_TRIAGE: "false"
