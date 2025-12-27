@@ -2,18 +2,19 @@ name: E2E - Playwright Cucumber (CI)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
   workflow_dispatch:
     inputs:
       cucumber_tags:
-        description: 'Tags de Cucumber (ej: @boarding, @ui and not @wip). Vacío = todos'
+        description: "Tags de Cucumber (ej: @boarding, @ui and not @wip). Vacío = todos"
         required: false
-        default: ''
+        default: ""
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # ✅ Usar tu runner self-hosted Windows
+    runs-on: [self-hosted, Windows, X64, fci]
     timeout-minutes: 60
 
     defaults:
@@ -24,18 +25,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Skip PRs from forks (no secrets)
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo "PR from fork detected -> skipping (secrets not available)."
+          exit 0
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          # En self-hosted el cache es opcional; lo podés dejar.
           cache: "npm"
           cache-dependency-path: playwright-cucumber-fci/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+      - name: Install Playwright browsers (Windows)
+        run: npx playwright install
 
       - name: Run tests (CI)
         env:
@@ -59,10 +67,10 @@ jobs:
           HEADLESS: "true"
           FRAMEWORK_TYPE: "AI"
 
-          # --- IMPORTANT: ReportPortal OFF in CI (Opción 2) ---
+          # --- IMPORTANT: ReportPortal OFF in CI ---
           RP_ENABLE: "false"
 
-          # --- Observability (si querés evidencia en artifacts) ---
+          # --- Observability ---
           TRACE: "true"
           TRACE_ON_PASS: "false"
           CAPTURE_CONSOLE: "true"
@@ -70,33 +78,18 @@ jobs:
           SAVE_HTML_ON_FAIL: "true"
           SAVE_TRACE_ON_FAIL: "true"
 
-          # --- Tags (manual dispatch) ---
-          CUCUMBER_TAGS: ${{ inputs.cucumber_tags }}
+          # --- Tags ---
+          CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '' }}
 
-          # --- AI triage (apagado por defecto en CI) ---
+          # --- AI triage (apagado en CI) ---
           AI_TRIAGE: "false"
-          # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }} # solo si AI_TRIAGE=true
         run: npm run test:ci
 
-      - name: Upload artifacts (reports)
+      - name: Upload artifacts (reports + evidence)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reports
+          name: reports-and-evidence
           path: |
             playwright-cucumber-fci/reports/**
-          if-no-files-found: ignore
-
-      # Opcional: subir traces/videos/screenshot aunque estén dentro de reports ya.
-      - name: Upload artifacts (screenshots/videos/traces)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: evidence
-          path: |
-            playwright-cucumber-fci/reports/screenshots/**
-            playwright-cucumber-fci/reports/videos/**
-            playwright-cucumber-fci/reports/traces/**
-            playwright-cucumber-fci/reports/html/**
-            playwright-cucumber-fci/reports/logs/**
           if-no-files-found: ignore
