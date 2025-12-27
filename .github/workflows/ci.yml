@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       cucumber_tags:
-        description: "Tags de Cucumber (ej: @ci, @ci and @boarding, @ui and not @wip)"
+        description: "Tags de Cucumber (ej: @ci, @boarding, @ui and not @wip). Vacío = @ci"
         required: false
         default: "@ci"
 
@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   tests:
-    # ✅ Evita PRs de forks (sin secrets)
     if: >
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -58,23 +57,24 @@ jobs:
           BASE_URL: ${{ vars.BASE_URL }}
           FCIWEBSITE_URL: ${{ vars.FCIWEBSITE_URL }}
           BOARDING_URL: ${{ vars.BOARDING_URL }}
+          ADMIN_LOGIN_URL: ${{ vars.ADMIN_LOGIN_URL }}
 
-          LENDER_USER: ${{ vars.LENDER_USER }}
+          # 👇 IMPORTANTE: alineá esto con cómo lo guardaste en GitHub (vars vs secrets)
+          LENDER_USER: ${{ secrets.LENDER_USER }}
           LENDER_PASSWORD: ${{ secrets.LENDER_PASSWORD }}
 
-          BORROWER_USER: ${{ vars.BORROWER_USER }}
+          BORROWER_USER: ${{ secrets.BORROWER_USER }}
           BORROWER_PASSWORD: ${{ secrets.BORROWER_PASSWORD }}
 
-          ADMIN_USER: ${{ vars.ADMIN_USER }}
+          ADMIN_USER: ${{ secrets.ADMIN_USER }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          ADMIN_LOGIN_URL: ${{ vars.ADMIN_LOGIN_URL }}
 
           # --- Framework ---
           CI: "true"
           HEADLESS: "true"
           FRAMEWORK_TYPE: "AI"
 
-          # --- IMPORTANT: ReportPortal OFF in CI ---
+          # --- ReportPortal OFF en CI ---
           RP_ENABLE: "false"
 
           # --- Observability ---
@@ -85,7 +85,7 @@ jobs:
           SAVE_HTML_ON_FAIL: "true"
           SAVE_TRACE_ON_FAIL: "true"
 
-          # --- Tags (solo manual dispatch) ---
+          # ✅ Tags: por defecto @ci (push/PR). En manual dispatch usa lo que pongas (default @ci).
           CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '@ci' }}
 
           # --- AI triage OFF en CI ---
