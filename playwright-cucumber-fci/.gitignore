@@ -1,0 +1,30 @@
+# Node modules
+node_modules/
+# Salida del compilador TypeScript
+dist/
+build/
+lib/
+# Archivos de entorno y variables confidenciales
+.env
+.env.*
+# Logs y reportes temporales
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+# Directorios temporales o de Playwright
+test-results/
+playwright-report/
+output/
+coverage/
+# VSCode settings locales
+.vscode/
+.history/
+# Se puede agregar cualquier archivo extra de caché local
+.DS_Store
+*.tsbuildinfo
+# Reportes de pruebas
+reports/
+allure-results/
+allure-report/
