@@ -32,6 +32,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          set-safe-directory: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
