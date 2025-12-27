@@ -1,0 +1,99 @@
+name: E2E - Playwright Cucumber (CI)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      cucumber_tags:
+        description: "Tags de Cucumber (ej: @boarding, @ui and not @wip). Vacío = todos"
+        required: false
+        default: ""
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    # ✅ Evita PRs de forks (sin secrets)
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
+    runs-on: [self-hosted, Windows, X64, fci]
+    timeout-minutes: 60
+
+    defaults:
+      run:
+        working-directory: playwright-cucumber-fci
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: playwright-cucumber-fci/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (Windows)
+        run: npx playwright install
+
+      - name: Clean previous artifacts
+        run: npm run clean
+
+      - name: Run tests (CI)
+        env:
+          # --- App env (Variables/Secrets) ---
+          BASE_URL: ${{ vars.BASE_URL }}
+          FCIWEBSITE_URL: ${{ vars.FCIWEBSITE_URL }}
+          BOARDING_URL: ${{ vars.BOARDING_URL }}
+
+          LENDER_USER: ${{ vars.LENDER_USER }}
+          LENDER_PASSWORD: ${{ secrets.LENDER_PASSWORD }}
+
+          BORROWER_USER: ${{ vars.BORROWER_USER }}
+          BORROWER_PASSWORD: ${{ secrets.BORROWER_PASSWORD }}
+
+          ADMIN_USER: ${{ vars.ADMIN_USER }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_LOGIN_URL: ${{ vars.ADMIN_LOGIN_URL }}
+
+          # --- Framework ---
+          CI: "true"
+          HEADLESS: "true"
+          FRAMEWORK_TYPE: "AI"
+
+          # --- IMPORTANT: ReportPortal OFF in CI ---
+          RP_ENABLE: "false"
+
+          # --- Observability ---
+          TRACE: "true"
+          TRACE_ON_PASS: "false"
+          CAPTURE_CONSOLE: "true"
+          CAPTURE_NETWORK: "true"
+          SAVE_HTML_ON_FAIL: "true"
+          SAVE_TRACE_ON_FAIL: "true"
+
+          # --- Tags (solo manual dispatch) ---
+          CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '' }}
+
+          # --- AI triage OFF en CI ---
+          AI_TRIAGE: "false"
+        run: npm run test:ci
+
+      - name: Upload artifacts (reports + evidence)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-and-evidence
+          path: |
+            playwright-cucumber-fci/reports/**
+          if-no-files-found: ignore
