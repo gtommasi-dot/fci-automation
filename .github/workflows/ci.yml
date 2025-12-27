@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       cucumber_tags:
-        description: "Tags de Cucumber (ej: @boarding, @ui and not @wip). Vacío = todos"
+        description: "@ci"
         required: false
         default: ""
 
