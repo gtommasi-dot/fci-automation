@@ -11,9 +11,17 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
-    # ✅ Usar tu runner self-hosted Windows
+    # ✅ Evita PRs de forks (sin secrets)
+    if: >
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+
     runs-on: [self-hosted, Windows, X64, fci]
     timeout-minutes: 60
 
@@ -25,17 +33,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Skip PRs from forks (no secrets)
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-        run: |
-          echo "PR from fork detected -> skipping (secrets not available)."
-          exit 0
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          # En self-hosted el cache es opcional; lo podés dejar.
           cache: "npm"
           cache-dependency-path: playwright-cucumber-fci/package-lock.json
 
@@ -44,6 +45,9 @@ jobs:
 
       - name: Install Playwright browsers (Windows)
         run: npx playwright install
+
+      - name: Clean previous artifacts
+        run: npm run clean
 
       - name: Run tests (CI)
         env:
@@ -78,10 +82,10 @@ jobs:
           SAVE_HTML_ON_FAIL: "true"
           SAVE_TRACE_ON_FAIL: "true"
 
-          # --- Tags ---
+          # --- Tags (solo manual dispatch) ---
           CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '' }}
 
-          # --- AI triage (apagado en CI) ---
+          # --- AI triage OFF en CI ---
           AI_TRIAGE: "false"
         run: npm run test:ci
 
