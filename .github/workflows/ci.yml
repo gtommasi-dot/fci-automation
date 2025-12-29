@@ -69,6 +69,7 @@ jobs:
           HEADLESS: "true"
           FRAMEWORK_TYPE: "AI"
 
+          # ReportPortal OFF en CI
           RP_ENABLE: "false"
 
           TRACE: "true"
@@ -86,25 +87,37 @@ jobs:
 
       - name: Generate Allure report
         if: always()
-        run: npm run allure:generate
+        shell: pwsh
+        run: |
+          if (Test-Path "allure-results") {
+            npm run allure:generate
+          } else {
+            "No allure-results directory found. Skipping Allure generate." | Out-Host
+          }
 
       - name: Write job summary
         if: always()
         continue-on-error: true
-        shell: powershell
+        shell: pwsh
         run: |
-          $junit = "reports/junit.xml"
+          $junit = Join-Path $PWD "reports/junit.xml"
+
+          "## ✅ E2E Execution Summary" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
           if (!(Test-Path $junit)) {
-            "## ✅ E2E Execution Summary" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            "No junit.xml found at: $junit" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "No junit.xml found at: $junit" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "Artifacts: ver 'reports-and-evidence' y 'allure-report'." | Add-Content -Path $env:GITHUB_STEP_SUMMARY
             exit 0
           }
 
           try {
             [xml]$xml = Get-Content $junit -Raw
 
-            $suite = $xml.testsuites.testsuite
+            # Soporta <testsuite> o <testsuites><testsuite/>
+            $suite = $xml.testsuite
+            if (-not $suite) { $suite = $xml.testsuites.testsuite }
             if ($suite -is [System.Array]) { $suite = $suite[0] }
 
             $tests = [int]$suite.tests
@@ -114,26 +127,22 @@ jobs:
             $time = $suite.time
             $passed = $tests - $failures - $errors - $skipped
 
-            "## ✅ E2E Execution Summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Metric | Value |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "|---|---:|" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Total | $tests |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Passed | $passed |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Failed | $failures |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Errors | $errors |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Skipped | $skipped |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "| Time (s) | $time |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Metric | Value |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "|---|---:|" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Total | $tests |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Passed | $passed |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Failed | $failures |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Errors | $errors |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Skipped | $skipped |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Time (s) | $time |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
-            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "### 📦 Artifacts" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- reports-and-evidence (screenshots/html/logs/traces/videos + json/junit)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "- allure-report (abrir index.html)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "### 📦 Artifacts" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "- reports-and-evidence (screenshots/html/logs/traces/videos + json/junit)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "- allure-report (abrir index.html o verlo por GitHub Pages si está habilitado)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
           }
           catch {
-            "## ✅ E2E Execution Summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-            "Failed to parse junit.xml: $($_.Exception.Message)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "Failed to parse junit.xml: $($_.Exception.Message)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
             exit 0
           }
 
@@ -154,3 +163,37 @@ jobs:
           name: allure-report
           path: playwright-cucumber-fci/allure-report/**
           if-no-files-found: ignore
+
+  deploy-pages:
+    # Publicar Pages solo en main y nunca en PR; y que corra aunque fallen los tests
+    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    needs: tests
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Download Allure report artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: allure-report
+          path: allure-report
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: allure-report
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
