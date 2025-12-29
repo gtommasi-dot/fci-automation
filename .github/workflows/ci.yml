@@ -48,19 +48,14 @@ jobs:
       - name: Install Playwright browsers (Windows)
         run: npx playwright install
 
-      # ⚠️ No hace falta este clean si usás test:ci:allure (ya hace clean)
-      # - name: Clean previous artifacts
-      #   run: npm run clean
-
       - name: Run tests (CI + Allure)
         env:
-          # --- App env (Variables/Secrets) ---
           BASE_URL: ${{ vars.BASE_URL }}
           FCIWEBSITE_URL: ${{ vars.FCIWEBSITE_URL }}
           BOARDING_URL: ${{ vars.BOARDING_URL }}
           ADMIN_LOGIN_URL: ${{ vars.ADMIN_LOGIN_URL }}
 
-          # ✅ Fallback: si lo guardaste como var o secret, igual funciona
+          # Users pueden estar en vars o secrets (fallback)
           LENDER_USER: ${{ vars.LENDER_USER || secrets.LENDER_USER }}
           BORROWER_USER: ${{ vars.BORROWER_USER || secrets.BORROWER_USER }}
           ADMIN_USER: ${{ vars.ADMIN_USER || secrets.ADMIN_USER }}
@@ -70,15 +65,12 @@ jobs:
           BORROWER_PASSWORD: ${{ secrets.BORROWER_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
 
-          # --- Framework ---
           CI: "true"
           HEADLESS: "true"
           FRAMEWORK_TYPE: "AI"
 
-          # --- ReportPortal OFF en CI ---
           RP_ENABLE: "false"
 
-          # --- Observability ---
           TRACE: "true"
           TRACE_ON_PASS: "false"
           CAPTURE_CONSOLE: "true"
@@ -86,10 +78,9 @@ jobs:
           SAVE_HTML_ON_FAIL: "true"
           SAVE_TRACE_ON_FAIL: "true"
 
-          # ✅ Tags: default @ci para push/PR. Manual usa input (default @ci)
+          # Tags: default @ci. Manual usa input (default @ci)
           CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '@ci' }}
 
-          # --- AI triage OFF en CI ---
           AI_TRIAGE: "false"
         run: npm run test:ci:allure
 
@@ -99,42 +90,52 @@ jobs:
 
       - name: Write job summary
         if: always()
-        shell: pwsh
+        continue-on-error: true
+        shell: powershell
         run: |
-          $junit = "playwright-cucumber-fci/reports/junit.xml"
+          $junit = "reports/junit.xml"
           if (!(Test-Path $junit)) {
             "## ✅ E2E Execution Summary" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
-            "No junit.xml found." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "No junit.xml found at: $junit" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             exit 0
           }
 
-          [xml]$xml = Get-Content $junit
-          $suite = $xml.testsuites.testsuite
-          if ($suite -is [System.Array]) { $suite = $suite[0] }
+          try {
+            [xml]$xml = Get-Content $junit -Raw
 
-          $tests = [int]$suite.tests
-          $failures = [int]$suite.failures
-          $errors = [int]$suite.errors
-          $skipped = [int]$suite.skipped
-          $time = $suite.time
-          $passed = $tests - $failures - $errors - $skipped
+            $suite = $xml.testsuites.testsuite
+            if ($suite -is [System.Array]) { $suite = $suite[0] }
 
-          "## ✅ E2E Execution Summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Metric | Value |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "|---|---:|" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Total | $tests |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Passed | $passed |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Failed | $failures |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Errors | $errors |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Skipped | $skipped |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "| Time (s) | $time |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            $tests = [int]$suite.tests
+            $failures = [int]$suite.failures
+            $errors = [int]$suite.errors
+            $skipped = [int]$suite.skipped
+            $time = $suite.time
+            $passed = $tests - $failures - $errors - $skipped
 
-          "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "### 📦 Artifacts" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "- reports-and-evidence (screenshots/html/logs/traces/videos + json/junit)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
-          "- allure-report (abrir index.html)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "## ✅ E2E Execution Summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Metric | Value |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "|---|---:|" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Total | $tests |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Passed | $passed |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Failed | $failures |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Errors | $errors |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Skipped | $skipped |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Time (s) | $time |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+
+            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "### 📦 Artifacts" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- reports-and-evidence (screenshots/html/logs/traces/videos + json/junit)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- allure-report (abrir index.html)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          }
+          catch {
+            "## ✅ E2E Execution Summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "Failed to parse junit.xml: $($_.Exception.Message)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            exit 0
+          }
 
       - name: Upload artifacts (reports + evidence)
         if: always()
