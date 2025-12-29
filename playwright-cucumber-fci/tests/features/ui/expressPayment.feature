@@ -1,7 +1,7 @@
 
 Feature: Pago Express Online
 
-  @express @ui @ci
+  @express @ui @ci @smoke
   Scenario: Pago Express exitoso para borrower
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "test8180" desde admin

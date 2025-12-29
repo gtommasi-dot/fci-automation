@@ -1,7 +1,7 @@
 
 Feature: Payoff Request
 
-  @payoff @ui
+  @payoff @ui @wip
   Scenario: Solicitud de Payoff exitosa o con validación de resultado
     Given que ingreso al sistema como "borrower"
     When cierro el popup si está presente

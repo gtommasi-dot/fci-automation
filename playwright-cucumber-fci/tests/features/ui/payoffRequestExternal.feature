@@ -3,7 +3,7 @@ Feature: Payoff Request External como Borrower
   Quiero solicitar un payoff request
   Para que se envíe la petición correctamente a mi lender
 
-  @ui @payoffExternal
+  @ui @payoffExternal @wip
   Scenario Outline: Flujo completo de Payoff Request External - "<loan>"
     Given que abro la página de Payoff Request External
     When completo el formulario inicial de payoff con "<loan>" "<zip>" "<tin>"

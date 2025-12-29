@@ -1,7 +1,7 @@
 
 Feature: Navegación general del Lender (barra lateral)
 
-  @lendernav @ui @ci
+  @lendernav @ui @ci @smoke
   Scenario: Navegación completa por todas las secciones del menú lateral como lender
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "gentest" desde admin

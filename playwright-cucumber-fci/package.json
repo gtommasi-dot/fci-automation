@@ -22,6 +22,7 @@
     "test:ai": "npx rimraf allure-results && cucumber-js --config cucumber.js --format allure-cucumberjs/reporter",
     "test:ai:tag": "npx rimraf allure-results && cucumber-js --config cucumber.js --format allure-cucumberjs/reporter --tags \"%TAGS%\"",
     "test:rp": "cucumber-js --config cucumber.js --format @reportportal/agent-js-cucumber",
+    "test:ci:allure": "npm run clean && cucumber-js --config cucumber.js --format allure-cucumberjs/reporter --format json:./reports/cucumber-report.json --format @cucumber/junit-xml-formatter:./reports/junit.xml",
     "allure:generate": "allure generate ./allure-results --clean -o ./allure-report",
     "allure:open": "allure open ./allure-report",
     "allure:report": "npx allure generate allure-results --clean -o allure-report && npx allure open allure-report"

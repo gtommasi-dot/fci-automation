@@ -472,20 +472,7 @@ async acceptTermsAndContinue(popup: Page) {
   await popup.waitForSelector('xpath=//*[@id="page"]/div[3]/div[1]/div[2]/button[1][not(@disabled)]', { timeout: 8000 });
   await popup.click('xpath=//*[@id="page"]/div[3]/div[1]/div[2]/button[1]');
 }
-/*
-async openSignatureModal(popup: Page) {
-  await popup.waitForSelector('xpath=//button[contains(@class, "us-visor-box__button") and contains(@class, "us-visor-element__box")]', { timeout: 20000 });
-  await popup.click('xpath=//button[contains(@class, "us-visor-box__button") and contains(@class, "us-visor-element__box")]');
-  // Espera el modal de firma (nombre del cliente)
-  await popup.waitForSelector('xpath=//div[contains(@class,"modal-content")]//div[text()="Client Name"]/ancestor::div[contains(@class,"us-card")]//input[@type="text" and not(@readonly)]', { timeout: 8000 });
-}
 
-async fillSignatureAndAccept(popup: Page, clientName: string) {
-  const inputSelector = 'xpath=//div[contains(@class,"modal-content")]//div[text()="Client Name"]/ancestor::div[contains(@class,"us-card")]//input[@type="text" and not(@readonly)]';
-  await popup.fill(inputSelector, clientName);
-  await popup.click('xpath=//div[contains(@class,"modal-footer")]//button[.//div[text()="Accept"] and not(@disabled)]');
-}
-*/
 
 /**
  * Abre el modal de firma y espera hasta que el campo "Client Name" esté visible.
@@ -493,19 +480,46 @@ async fillSignatureAndAccept(popup: Page, clientName: string) {
 async openSignatureModal(popup: Page) {
   console.log('🖊️ Abriendo modal de firma...');
 
-  // Esperar y hacer clic en el botón del visor que abre el modal
-  const openSignatureButton = popup.locator(
-    'button.us-visor-box__button.us-visor-element__box'
-  );
-  await expect(openSignatureButton).toBeVisible({ timeout: 20000 });
-  await openSignatureButton.click();
+  // Espera a que el visor exista (evita correr antes de tiempo)
+  const visorRoot = popup.locator('[id^="visor"], .us-visor, #page').first();
+  await expect(visorRoot).toBeVisible({ timeout: 30_000 });
 
-  // Esperar el modal de firma (busca el input del card con título "Client Name")
-  const clientNameInput = popup
-    .getByRole('dialog')
-    .locator('.us-card:has(.us-card-title:has-text("Client Name")) input.form-control:not([readonly])');
+  // Todos los boxes posibles (muchos)
+  const boxes = popup.locator('button.us-visor-box__button.us-visor-element__box');
 
-  await expect(clientNameInput).toBeVisible({ timeout: 20000 });
+  // A) Preferido: box con texto típico de firma
+  const signBoxByText = boxes.filter({
+    hasText: /sign|signature|click to sign|firma/i,
+  }).first();
+
+  // B) Alternativa: un box visible (primero)
+  const firstVisibleBox = boxes.first();
+
+  // Helper para click robusto
+  const clickBox = async (box: Locator, label: string) => {
+    await expect(box, `No se encontró box de firma (${label}).`).toBeVisible({ timeout: 20_000 });
+    await box.scrollIntoViewIfNeeded();
+    // Evita problemas de overlays/transiciones
+    await box.click({ timeout: 20_000, trial: true }).catch(() => null);
+    await box.click({ timeout: 20_000 });
+    console.log(`✅ Click en box de firma usando estrategia: ${label}`);
+  };
+
+  // Intento A
+  if (await signBoxByText.count().catch(() => 0)) {
+    await clickBox(signBoxByText, 'texto (sign/signature)');
+  } else {
+    // Intento B: primer box (no strict)
+    await clickBox(firstVisibleBox, 'first()');
+  }
+
+  // Esperar el modal de firma: el input de Client Name
+  // (No asumo role=dialog siempre; algunos modals no lo traen bien)
+  const modal = popup.locator('.modal-content:has-text("Client Name")').first();
+  const clientNameInput = modal.locator('input[type="text"]:not([readonly])').first();
+
+  await expect(modal, 'No apareció el modal de firma.').toBeVisible({ timeout: 20_000 });
+  await expect(clientNameInput, 'No apareció el input "Client Name" en el modal.').toBeVisible({ timeout: 20_000 });
 
   console.log('✅ Modal de firma abierto correctamente.');
 }

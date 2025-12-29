@@ -1,6 +1,6 @@
 
 Feature: Pago de factura por Credit Card con diferentes marcas
-  @fciInvoiceCard @ui
+  @fciInvoiceCard @ui @smoke
   Scenario: Pago exitoso de una factura por <tipo>
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "2001670" desde admin

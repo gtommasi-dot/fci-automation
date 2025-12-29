@@ -1,6 +1,6 @@
 Feature: One-Time Express Payment OTP
 
-  @otpA 
+  @otpA @smoke
   Scenario Outline: Camino A - OTP con SSN/EIN/TIN (Last 4 Digits)
     Given que ingreso a la página de One-Time Express Payment
     When valido la cuenta usando SSN con account number "<accountNumber>" y últimos 4 dígitos "<ssnLast4>"
@@ -20,7 +20,7 @@ Feature: One-Time Express Payment OTP
       | 9160059608    | 6789     |
       | 399579695     | 6789     |
 
-  @otpB 
+  @otpB @smoke
   Scenario Outline: Camino B - OTP con Address Number y Zip Code
     Given que ingreso a la página de One-Time Express Payment
     And cambio el formulario para usar address number y zip code

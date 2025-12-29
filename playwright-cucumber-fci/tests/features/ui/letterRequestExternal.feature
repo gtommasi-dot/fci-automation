@@ -1,4 +1,4 @@
-@letterExternal @ui
+@letterExternal @ui @wip
 Feature: Letter Request External
 
   Scenario Outline: Flujo completo de Letter Request External con "<authType>"

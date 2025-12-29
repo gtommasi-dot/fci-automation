@@ -1,6 +1,6 @@
 Feature: Login FCI Lender
 
-  @login @ui @2fa @ci
+  @login @ui @2fa @ci @smoke
   Scenario: Login exitoso con verificación por código
     Given que navego a la página de login
     When ingreso usuario y contraseña

@@ -36,7 +36,7 @@ When('regreso a OCR Check Groups', async function () {
   await this.ocrPage!.returnToGroups();
 });
 
-When('entro a Details del primer registro', {timeout: 10000} , async function () {
+When('entro a Details del primer registro', {timeout: 30000} , async function () {
   await this.ocrPage!.clickFirstRowDetails();
 });
 

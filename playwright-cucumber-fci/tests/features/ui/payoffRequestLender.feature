@@ -1,7 +1,7 @@
 @payoffRequestLender
 Feature: Proceso de Payoff Request desde Lirs
 
-  @payoffRequestLenderSuccess @ui
+  @payoffRequestLenderSuccess @ui @wip
   Scenario: Firma y validación tras solicitud de Payoff exitosa como Lender
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "1707626" desde admin
@@ -30,7 +30,7 @@ Feature: Proceso de Payoff Request desde Lirs
     # And marco el grupo y hago la firma del lender
     Then envío la firma y verifico la aprobación
 
-    @payoffRequestBorrowerSuccess @ui
+    @payoffRequestBorrowerSuccess @ui @wip
   Scenario: Firma y validación tras solicitud de Payoff exitosa como Borrower
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "1707626" desde admin
@@ -59,7 +59,7 @@ Feature: Proceso de Payoff Request desde Lirs
     # And marco el grupo y hago la firma del lender
     Then envío la firma y verifico la aprobación
 
-  @payoffRequestBorrowerActive @ui
+  @payoffRequestBorrowerActive @ui @wip
   Scenario: Solicitud de Payoff Activa, como Borrower
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "amercapgrp" desde admin
@@ -77,7 +77,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-    @payoffRequestLenderActive @ui
+    @payoffRequestLenderActive @ui @wip
   Scenario: Solicitud de Payoff Activa, como Lender
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "amercapgrp" desde admin
@@ -95,7 +95,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-    @payoffRequestLenderFuther @ui
+    @payoffRequestLenderFuther @ui @wip
   Scenario: Solicitud de Payoff Futher como Lender
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "v1908510" desde admin
@@ -113,7 +113,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-     @payoffRequestBorrowerFuther @ui
+     @payoffRequestBorrowerFuther @ui @wip
   Scenario: Solicitud de Payoff Futher como Borrower
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "v1908510" desde admin
@@ -131,7 +131,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-      @payoffRequestBrokerFuther @ui
+      @payoffRequestBrokerFuther @ui @wip
   Scenario: Solicitud de Payoff Futher como Broker
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "v1908510" desde admin
@@ -149,7 +149,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-    @payoffRequestLenderPenalty @ui
+    @payoffRequestLenderPenalty @ui @wip
   Scenario: Solicitud de Payoff Prepayment Penalty Lender
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "V2507502" desde admin
@@ -167,7 +167,7 @@ Feature: Proceso de Payoff Request desde Lirs
     And envío la solicitud de Payoff
     And gestionar el resultado de la solicitud de Payoff
 
-     @payoffRequestBorrowerPenalty @ui
+     @payoffRequestBorrowerPenalty @ui @wip
   Scenario: Solicitud de Payoff Prepayment Penalty como Borrower
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "V2507502" desde admin

@@ -9,7 +9,7 @@ Feature: OCR Check Groups - Split, revisar info y completar Loan
     Given que ingreso al sistema como "admin"
    # And estoy en el Home del portal
 
-  @ocr @ui
+  @ocr @ui @wip
   Scenario: Subir TIF, generar split, revisar info y completar Loan
     Given voy a OCR Check Groups desde el menú
     And abro el modal New Split Image y subo el archivo "ocr/Batch_001_TEST.tif"

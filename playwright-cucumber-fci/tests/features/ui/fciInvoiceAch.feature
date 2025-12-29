@@ -1,6 +1,6 @@
 
 Feature: Pago de factura por ACH desde el portal Admin
-  @fciInvoiceAch @ui
+  @fciInvoiceAch @ui @smoke
   Scenario: Pago exitoso de una factura por ACH
     Given que ingreso al sistema como "admin"
     When busco y accedo al lender "2001670" desde admin
