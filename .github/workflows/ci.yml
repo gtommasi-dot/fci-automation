@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       cucumber_tags:
-        description: "Tags de Cucumber (ej: @ci, @boarding, @ui and not @wip). Vacío = @ci"
+        description: "Tags de Cucumber (ej: @ci, @boarding, @ui and not @wip). Default = @ci"
         required: false
         default: "@ci"
 
@@ -55,12 +55,10 @@ jobs:
           BOARDING_URL: ${{ vars.BOARDING_URL }}
           ADMIN_LOGIN_URL: ${{ vars.ADMIN_LOGIN_URL }}
 
-          # Users pueden estar en vars o secrets (fallback)
           LENDER_USER: ${{ vars.LENDER_USER || secrets.LENDER_USER }}
           BORROWER_USER: ${{ vars.BORROWER_USER || secrets.BORROWER_USER }}
           ADMIN_USER: ${{ vars.ADMIN_USER || secrets.ADMIN_USER }}
 
-          # Passwords siempre secrets
           LENDER_PASSWORD: ${{ secrets.LENDER_PASSWORD }}
           BORROWER_PASSWORD: ${{ secrets.BORROWER_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
@@ -79,7 +77,7 @@ jobs:
           SAVE_HTML_ON_FAIL: "true"
           SAVE_TRACE_ON_FAIL: "true"
 
-          # Tags: default @ci. Manual usa input (default @ci)
+          # Default @ci salvo que sea workflow_dispatch (usa el input)
           CUCUMBER_TAGS: ${{ github.event_name == 'workflow_dispatch' && inputs.cucumber_tags || '@ci' }}
 
           AI_TRIAGE: "false"
@@ -87,37 +85,25 @@ jobs:
 
       - name: Generate Allure report
         if: always()
-        shell: pwsh
-        run: |
-          if (Test-Path "allure-results") {
-            npm run allure:generate
-          } else {
-            "No allure-results directory found. Skipping Allure generate." | Out-Host
-          }
+        run: npm run allure:generate
 
       - name: Write job summary
         if: always()
         continue-on-error: true
-        shell: pwsh
+        shell: powershell
         run: |
-          $junit = Join-Path $PWD "reports/junit.xml"
-
-          "## ✅ E2E Execution Summary" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-          "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+          $junit = "reports/junit.xml"
+          "## ✅ E2E Execution Summary" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
 
           if (!(Test-Path $junit)) {
-            "No junit.xml found at: $junit" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "Artifacts: ver 'reports-and-evidence' y 'allure-report'." | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "No junit.xml found at: $junit" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
             exit 0
           }
 
           try {
             [xml]$xml = Get-Content $junit -Raw
-
-            # Soporta <testsuite> o <testsuites><testsuite/>
-            $suite = $xml.testsuite
-            if (-not $suite) { $suite = $xml.testsuites.testsuite }
+            $suite = $xml.testsuites.testsuite
             if ($suite -is [System.Array]) { $suite = $suite[0] }
 
             $tests = [int]$suite.tests
@@ -127,23 +113,21 @@ jobs:
             $time = $suite.time
             $passed = $tests - $failures - $errors - $skipped
 
-            "| Metric | Value |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "|---|---:|" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Total | $tests |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Passed | $passed |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Failed | $failures |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Errors | $errors |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Skipped | $skipped |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "| Time (s) | $time |" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+            "| Metric | Value |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "|---|---:|" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Total | $tests |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Passed | $passed |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Failed | $failures |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Errors | $errors |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Skipped | $skipped |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "| Time (s) | $time |" | Out-File $env:GITHUB_STEP_SUMMARY -Append
 
-            "" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "### 📦 Artifacts" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "- reports-and-evidence (screenshots/html/logs/traces/videos + json/junit)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            "- allure-report (abrir index.html o verlo por GitHub Pages si está habilitado)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-          }
-          catch {
-            "Failed to parse junit.xml: $($_.Exception.Message)" | Add-Content -Path $env:GITHUB_STEP_SUMMARY
-            exit 0
+            "" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "### 📦 Artifacts" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- reports-and-evidence" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+            "- allure-report (también se publica en GitHub Pages)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          } catch {
+            "Failed to parse junit.xml: $($_.Exception.Message)" | Out-File $env:GITHUB_STEP_SUMMARY -Append
           }
 
       - name: Upload artifacts (reports + evidence)
@@ -156,7 +140,7 @@ jobs:
             playwright-cucumber-fci/allure-results/**
           if-no-files-found: ignore
 
-      - name: Upload Allure report (HTML)
+      - name: Upload Allure report (artifact for Pages)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -165,9 +149,8 @@ jobs:
           if-no-files-found: ignore
 
   deploy-pages:
-    # Publicar Pages solo en main y nunca en PR; y que corra aunque fallen los tests
-    if: ${{ always() && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
     needs: tests
+    if: always()
     runs-on: ubuntu-latest
 
     permissions:
