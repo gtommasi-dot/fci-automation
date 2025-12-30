@@ -49,6 +49,8 @@ When('subo los documentos requeridos', async function () {
 
 Then('los documentos deberían haberse subido correctamente', async function () {
   await boarding.verifyDocumentsUploaded(3);
+  await boarding.ensureUploadedDocsAreCorrectlyCategorized();
+  await boarding.logToastIfCategoryErrorAppears();
 });
 
 Then('verifico opciones Yes y No en el paso', async function () {

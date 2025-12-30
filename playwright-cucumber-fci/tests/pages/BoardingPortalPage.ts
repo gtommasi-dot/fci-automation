@@ -1072,10 +1072,12 @@ private async tryClickSurface(
   target: Page | import('@playwright/test').Frame,
   surface: import('@playwright/test').Locator,
   label: string,
-  preDelayMs = 900 // delay antes de intentar firmar
+  preDelayMs = 900
 ): Promise<boolean> {
+  const tp = this.getTargetPage(target);
+
   try {
-    await this.page.waitForTimeout(preDelayMs);
+    await tp.waitForTimeout(preDelayMs);
     await surface.waitFor({ state: 'attached', timeout: 2000 }).catch(() => {});
     await this.scrollSurfaceIntoCenter(target, surface);
     await surface.hover({ timeout: 1200 }).catch(() => {});
@@ -1100,7 +1102,7 @@ private async tryClickSurface(
     this.log(`[DocSign] Click force falló en ${label}: ${(e2 as Error).message || e2}`);
   }
 
-  // 3) doble-click (algunos visores lo requieren)
+  // 3) doble click
   try {
     await surface.dblclick({ timeout: 1200 });
     this.log(`[DocSign] DblClick OK en ${label}.`);
@@ -1109,12 +1111,12 @@ private async tryClickSurface(
     this.log(`[DocSign] DblClick falló en ${label}: ${(e3 as Error).message || e3}`);
   }
 
-  // 4) click por coordenadas (tras centrar)
+  // 4) click por coordenadas (EN EL PAGE CORRECTO)
   try {
     const handle = await surface.elementHandle({ timeout: 800 }).catch(() => null);
     const box = handle ? await handle.boundingBox() : null;
     if (box) {
-      await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await tp.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       this.log(`[DocSign] Click OK en ${label} (coords).`);
       return true;
     }
@@ -1122,11 +1124,10 @@ private async tryClickSurface(
     this.log(`[DocSign] Click coords falló en ${label}: ${(e4 as Error).message || e4}`);
   }
 
-  // 5) fallback: dispatchEvent directo al nodo y a su contenedor "visor"
+  // 5) dispatchEvent
   try {
     const handle = await surface.elementHandle().catch(() => null);
     if (handle) {
-      // ⬇️ Cambiado a handle.evaluate((el:any)=>...) para evitar el error de tipos
       await handle.evaluate((el: any) => {
         el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
         const parent = el.closest('.us-visor-box__element') as HTMLElement | null;
@@ -1143,6 +1144,7 @@ private async tryClickSurface(
 
   return false;
 }
+
 
 
 private async waitDocSignResult(opts: {
@@ -1184,6 +1186,7 @@ private async waitDocSignResult(opts: {
 
 
   // ======= DocSign genérico =======
+// ======= DocSign genérico (FIX CONTINUE disabled) =======
 async docSignFlow({
   target,
   editInfoValue,
@@ -1195,79 +1198,174 @@ async docSignFlow({
   signButtonsCount: number;
   perSignatureDelayMs?: number;
 }) {
-  // Intro + edición
-  const acceptTerms = target.locator('input#accept-terms');
-  await acceptTerms.check();
-  await target.getByRole('button', { name: 'CONTINUE' }).click();
+  // ✅ Page correcto (si target es Frame => target.page())
+  const tp: Page =
+    typeof (target as any)?.page === 'function' ? (target as any).page() : (target as Page);
 
-  await target.getByRole('button', { name: 'Edit info', exact: true }).click();
+  await tp.bringToFront().catch(() => {});
+
+  // ===== Intro (ACEPTAR TÉRMINOS + CONTINUE habilitado) =====
+  const acceptTerms = target.locator('input#accept-terms').first();
+  const acceptLabel = target.locator('label[for="accept-terms"]').first();
+  const continueBtn = target.getByRole('button', { name: /^CONTINUE$/ }).first();
+
+  await acceptTerms.waitFor({ state: 'attached', timeout: 20000 });
+  await acceptTerms.scrollIntoViewIfNeeded().catch(() => {});
+  await acceptTerms.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+
+  const ensureContinueEnabled = async () => {
+    // helpers
+    const isContinueEnabled = async () => await continueBtn.isEnabled().catch(() => false);
+    const isTermsChecked = async () => await acceptTerms.isChecked().catch(() => false);
+
+    // 0) si ya está habilitado, no hacemos nada
+    if (await isContinueEnabled()) return;
+
+    // 1) setChecked (mejor que check en inputs custom)
+    try {
+      await acceptTerms.setChecked(true, { force: true });
+    } catch {
+      // fallback: click directo
+      await acceptTerms.click({ force: true }).catch(() => {});
+    }
+
+    await tp.waitForTimeout(150);
+
+    if (await isContinueEnabled()) return;
+
+    // 2) click al label (muchas UIs escuchan en el label/wrapper)
+    try {
+      if (await acceptLabel.count().catch(() => 0)) {
+        await acceptLabel.click({ force: true });
+      }
+    } catch {}
+
+    await tp.waitForTimeout(150);
+
+    if (await isContinueEnabled()) return;
+
+    // 3) forzar checked + disparar eventos (React suele necesitar change/input)
+    try {
+      const h = await acceptTerms.elementHandle().catch(() => null);
+      if (h) {
+        await h.evaluate((el: any) => {
+          if (!el) return;
+          el.checked = true;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      }
+    } catch {}
+
+    await tp.waitForTimeout(150);
+
+    // 4) si sigue sin habilitar, revalidar estado y loggear
+    const checked = await isTermsChecked();
+    const enabled = await isContinueEnabled();
+    this.log(`[DocSign] Terms checked=${checked} | CONTINUE enabled=${enabled}`);
+  };
+
+  // Reintento “inteligente” hasta 20s
+  const introDeadline = Date.now() + 20000;
+  while (Date.now() < introDeadline) {
+    await ensureContinueEnabled();
+
+    const enabled = await continueBtn.isEnabled().catch(() => false);
+    if (enabled) break;
+
+    await tp.waitForTimeout(300);
+  }
+
+  // Si sigue disabled => evidencia + error claro
+  if (!(await continueBtn.isEnabled().catch(() => false))) {
+    await this.safeShot('docsign_continue_still_disabled');
+    const checked = await acceptTerms.isChecked().catch(() => false);
+    const disabledAttr = await continueBtn.getAttribute('disabled').catch(() => null);
+    throw new Error(
+      `[DocSign] CONTINUE sigue deshabilitado. accept-terms checked=${checked}, disabledAttr=${disabledAttr}`
+    );
+  }
+
+  // Click real (ya habilitado)
+  await continueBtn.click();
+
+  // ===== Edit info =====
+  const editInfoBtn = target.getByRole('button', { name: 'Edit info', exact: true });
+  await editInfoBtn.waitFor({ state: 'visible', timeout: 20000 });
+  await editInfoBtn.click();
+
   const editInput = target.locator('input.us-input__field[name="Data"]');
+  await editInput.waitFor({ state: 'visible', timeout: 20000 });
   await editInput.fill(editInfoValue);
-    // Esperar a que el logo/imágen esté presente y cargado
+
+  // ===== Esperar logo/imagen cargada =====
   const logoImg = target.locator('div.us-d-flex.us-justify-center.us-items-center img');
-
-  // Espera a que esté en el DOM y visible
-  await logoImg.waitFor({ state: 'visible', timeout: 15000 });
-
+  await logoImg.waitFor({ state: 'visible', timeout: 20000 });
   this.log('[DocSign] Imagen/logo presente y cargada.');
-  // Espera explícita de 5 segundos
-  await target.waitForTimeout(10000);
 
-  await target.getByRole('button', { name: 'Accept', exact: true }).click();
+  await tp.waitForTimeout(10000);
 
+  // ===== Accept =====
+  const acceptBtn = target.getByRole('button', { name: 'Accept', exact: true });
+  await acceptBtn.waitFor({ state: 'visible', timeout: 20000 });
+  await acceptBtn.click();
+
+  // ===== Firmas =====
   const submitBtn = target.getByRole('button', { name: 'SUBMIT APPROVAL', exact: true });
+  await submitBtn.waitFor({ state: 'attached', timeout: 20000 });
 
-  // Espera inicial
   const allSurfaces = target.locator('.us-docsign-element.us-docsign-surface');
-  await allSurfaces.first().waitFor({ state: 'attached', timeout: 15000 }).catch(() => {});
-  await this.page.waitForTimeout(300);
+  await allSurfaces.first().waitFor({ state: 'attached', timeout: 20000 }).catch(() => {});
+  await tp.waitForTimeout(300);
 
   let clicksHechos = 0;
-  const deadline = Date.now() + 100_000; // 100s de ventana
-  for (let ronda = 1; ronda <= 7; ronda++) {
-    // Re-evaluar sólo visibles, y además intentamos priorizar las que están más abajo (por si quedan fuera)
+  const deadline = Date.now() + 100_000;
+  let submitEnabled = await submitBtn.isEnabled().catch(() => false);
+
+  for (let ronda = 1; ronda <= 7 && !submitEnabled; ronda++) {
     const surfaces = target.locator('.us-docsign-element.us-docsign-surface:visible');
     const countNow = await surfaces.count().catch(() => 0);
+
     this.log(`[DocSign] Ronda ${ronda}: visibles=${countNow}; clicks=${clicksHechos}/${signButtonsCount}`);
 
-    // si el visor reordena, probamos de abajo hacia arriba
     for (let i = countNow - 1; i >= 0; i--) {
       if (clicksHechos >= signButtonsCount) break;
 
       const current = surfaces.nth(i);
-      const ok = await this.tryClickSurface(target, current, `surface#${i + 1} (ronda ${ronda})`, perSignatureDelayMs);
+      const ok = await this.tryClickSurface(
+        target,
+        current,
+        `surface#${i + 1} (ronda ${ronda})`,
+        perSignatureDelayMs
+      );
+
       if (ok) {
         clicksHechos++;
-        await this.page.waitForTimeout(350);
-        if (await submitBtn.isEnabled().catch(() => false)) {
+        await tp.waitForTimeout(350);
+
+        for (let t = 0; t < 6; t++) {
+          submitEnabled = await submitBtn.isEnabled().catch(() => false);
+          if (submitEnabled) break;
+          await tp.waitForTimeout(200);
+        }
+
+        if (submitEnabled) {
           this.log('[DocSign] SUBMIT APPROVAL habilitado (post-click).');
-          ronda = 999; // salir
           break;
         }
-      } else {
-        this.log(`[DocSign] Surface#${i + 1} no respondió en ronda ${ronda}; se reintentará.`);
       }
     }
 
-    if (await submitBtn.isEnabled().catch(() => false)) break;
-    if (clicksHechos >= signButtonsCount) {
-      this.log('[DocSign] Alcanzado objetivo de clics; comprobación final tras breve espera.');
-      await this.page.waitForTimeout(perSignatureDelayMs);
-      if (await submitBtn.isEnabled().catch(() => false)) break;
-    }
+    if (Date.now() > deadline) break;
 
-    if (Date.now() > deadline) {
-      this.log('[DocSign] Se alcanzó el límite de tiempo de firma.');
-      break;
-    }
+    try { await tp.keyboard.press('PageDown'); } catch {}
+    await tp.waitForTimeout(500);
 
-    // Scroll pequeño extra para revelar campos que estén justo fuera
-    try { await this.page.keyboard.press('PageDown'); } catch {}
-    await this.page.waitForTimeout(500);
+    submitEnabled = await submitBtn.isEnabled().catch(() => false);
   }
 
-  // Validación final
-  if (!(await submitBtn.isEnabled().catch(() => false))) {
+  submitEnabled = await submitBtn.isEnabled().catch(() => false);
+  if (!submitEnabled) {
     await this.safeShot('docsign_submit_disabled_after_retries');
     const rem = await target.locator('.us-docsign-element.us-docsign-surface:visible').count().catch(() => -1);
     throw new Error(`SUBMIT APPROVAL sigue deshabilitado tras ${clicksHechos} clics. Superficies visibles remanentes: ${rem}.`);
@@ -1275,16 +1373,17 @@ async docSignFlow({
 
   await submitBtn.click();
 
-  // Confirmación rápida y explícita (sin esperar cierres/animaciones)
-try {
-  await this.waitDocSignResult({ target, timeoutMs: 60_000 }); // ajustable
-} catch (e) {
-  // Reintento breve opcional (a veces el toast tarda un poco más)
-  this.log(`[DocSign] Reintento de confirmación: ${(e as Error).message || e}`);
-  await this.waitDocSignResult({ target, timeoutMs: 30_000 });
+  try {
+    await this.waitDocSignResult({ target, timeoutMs: 60_000 });
+  } catch (e) {
+    this.log(`[DocSign] Reintento de confirmación: ${(e as Error).message || e}`);
+    await this.waitDocSignResult({ target, timeoutMs: 30_000 });
+  }
+
+  this.log('[DocSign] Confirmación recibida, continuando.');
 }
-this.log('[DocSign] Confirmación recibida, continuando.');
-}
+
+
 
 
 
@@ -1767,22 +1866,46 @@ async navigateToFinalBoarding() {
 
 // ===== util: obtener referencias comunes del grid =====
 private get finalGrid() {
-  const grid = this.mainArea.locator('div.k-grid,div.k-table').first();
-  return {
-    grid,
-    tbody: grid.locator('tbody').first(),
-    rows: grid.locator('tbody tr[role="row"]'),
-    // contenedores de scroll usados por Kendo
-    scrollArea: grid.locator('.k-grid-content, .k-table-wrap, .k-virtual-content, .k-pager-wrap').first(),
-    // botones de pager si existen
-    pagerFirst: grid.locator('.k-pager-first, .k-pager-nav .k-pager-first').first(),
-    pagerNext: grid.locator('.k-pager-next, .k-pager-nav .k-pager-next').first(),
-    pagerPrev: grid.locator('.k-pager-prev, .k-pager-nav .k-pager-prev').first(),
-    pagerLast: grid.locator('.k-pager-last, .k-pager-nav .k-pager-last').first(),
-    refreshBtn: grid.locator('.k-pager-refresh, .k-grid-toolbar .k-button[title*="Refresh"]').first(),
-    // quick search si existiera
-    quickSearch: grid.locator('input.k-input-inner[placeholder*="Search"], input[placeholder*="Search"]').first(),
-  };
+  // ✅ agarrar el grid/table VISIBLE (evita header grid u otros ocultos)
+  const grid = this.mainArea.locator('div.k-grid:visible, div.k-table:visible').first();
+
+  const tbody = grid.locator(
+    'tbody.k-table-tbody, .k-grid-content tbody, tbody'
+  ).first();
+
+  const rows = tbody.locator('tr[role="row"], tr.k-table-row');
+
+  const scrollArea = grid.locator(
+    '.k-grid-content, .k-table-wrap, .k-virtual-content, .k-grid-table-wrap'
+  ).first();
+
+  const pagerFirst = grid.locator('.k-pager-first, .k-pager-nav .k-pager-first').first();
+  const pagerNext  = grid.locator('.k-pager-next,  .k-pager-nav .k-pager-next').first();
+  const refreshBtn = grid.locator('.k-pager-refresh, .k-grid-toolbar .k-button[title*="Refresh"]').first();
+
+  const quickSearch = grid.locator(
+    'input.k-input-inner[placeholder*="Search"], input[placeholder*="Search"], input[placeholder*="Filter"], input[aria-label*="Search"]'
+  ).first();
+
+  return { grid, tbody, rows, scrollArea, pagerFirst, pagerNext, refreshBtn, quickSearch };
+}
+
+private async waitFinalBoardingGridReady(timeoutMs = 30000) {
+  const { grid, rows } = this.finalGrid;
+
+  await expect(grid).toBeVisible({ timeout: timeoutMs });
+
+  // ✅ esperar loaders típicos (si existen)
+  await this.page
+    .locator('.k-loading-mask,.k-loading,.k-busy,[aria-busy="true"]')
+    .first()
+    .waitFor({ state: 'detached', timeout: 10000 })
+    .catch(() => {});
+
+  // ✅ Kendo puede renderizar tbody vacío: esperamos a que haya rows
+  await expect
+    .poll(async () => await rows.count().catch(() => 0), { timeout: timeoutMs })
+    .toBeGreaterThan(0);
 }
 
 // ===== util: construir locator de fila por PrevAccount =====
@@ -1806,11 +1929,95 @@ private rowByPrevAccount(prevAccount: string) {
 }
 
 // ===== util: intentar match directo en la página actual =====
-private async tryFindRowHere(prevAccount: string) {
-  const { byCol2, byAnyCell } = this.rowByPrevAccount(prevAccount);
+private async tryFindRowHere(prevAccount: string): Promise<Locator | null> {
+  const { tbody } = this.finalGrid;
 
-  if (await byCol2.count()) return byCol2;
-  if (await byAnyCell.count()) return byAnyCell;
+  // ✅ lo más robusto: buscar por contenido normalizado dentro de un td cualquiera
+  const exactRow = tbody.locator(
+    `xpath=.//tr[( @role="row" or contains(@class,"k-table-row")) and .//td[normalize-space()="${prevAccount}"]]`
+  ).first();
+
+  if ((await exactRow.count().catch(() => 0)) > 0) return exactRow;
+
+  // ✅ fallback: por data-grid-col-index (según tu HTML, PrevAccount está en col-index 1)
+  const byDataCol = tbody.locator('tr[role="row"], tr.k-table-row').filter({
+    has: tbody.locator('td[data-grid-col-index="1"]').filter({ hasText: prevAccount }),
+  }).first();
+
+  if ((await byDataCol.count().catch(() => 0)) > 0) return byDataCol;
+
+  // ✅ fallback final: contains (por si hay espacios raros)
+  const containsRow = tbody.locator('tr[role="row"], tr.k-table-row').filter({ hasText: prevAccount }).first();
+  if ((await containsRow.count().catch(() => 0)) > 0) return containsRow;
+
+  return null;
+}
+
+private async tryFilterFinalBoarding(prevAccount: string): Promise<Locator | null> {
+  const { quickSearch } = this.finalGrid;
+  if (!(await quickSearch.count().catch(() => 0))) return null;
+
+  await quickSearch.fill('');
+  await quickSearch.type(prevAccount, { delay: 20 });
+  await this.page.keyboard.press('Enter').catch(() => {});
+  await this.page.waitForTimeout(500);
+
+  return this.tryFindRowHere(prevAccount);
+}
+
+private async tryPaginateFinalBoarding(prevAccount: string): Promise<Locator | null> {
+  const { pagerFirst, pagerNext, rows } = this.finalGrid;
+
+  if (await pagerFirst.count().catch(() => 0)) {
+    const disabled = await pagerFirst.getAttribute('aria-disabled').catch(() => null);
+    if (disabled !== 'true') {
+      await pagerFirst.click().catch(() => {});
+      await rows.first().waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
+      await this.page.waitForTimeout(300);
+    }
+  }
+
+  for (let i = 0; i < 80; i++) {
+    const row = await this.tryFindRowHere(prevAccount);
+    if (row) return row;
+
+    if (!(await pagerNext.count().catch(() => 0))) break;
+    const disabled = await pagerNext.getAttribute('aria-disabled').catch(() => null);
+    if (disabled === 'true') break;
+
+    await pagerNext.click().catch(() => {});
+    await rows.first().waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
+    await this.page.waitForTimeout(350);
+  }
+
+  return null;
+}
+
+private async tryInfiniteScrollFinalBoarding(prevAccount: string): Promise<Locator | null> {
+  const { scrollArea, rows } = this.finalGrid;
+  if (!(await scrollArea.count().catch(() => 0))) return null;
+
+  let lastSig = '';
+  const sig = async () => {
+    const lastRow = rows.filter({ hasText: /.*/ }).last();
+    return ((await lastRow.innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+  };
+
+  lastSig = await sig().catch(() => '');
+
+  for (let i = 0; i < 60; i++) {
+    const row = await this.tryFindRowHere(prevAccount);
+    if (row) return row;
+
+    await scrollArea.evaluate((el: HTMLElement) => { el.scrollTop = el.scrollHeight; }).catch(() => {});
+    await this.page.waitForTimeout(300);
+
+    const newSig = await sig().catch(() => '');
+    if (newSig && newSig === lastSig) break;
+    lastSig = newSig;
+
+    await rows.first().waitFor({ state: 'visible', timeout: 4000 }).catch(() => {});
+  }
 
   return null;
 }
@@ -1883,42 +2090,69 @@ private async tryInfiniteScroll(prevAccount: string) {
 }
 
 // ===== FinalBoarding: marcar fila por PrevAccount (robusto) =====
-async markFinalBoardingRowByPrevAccount(prevAccount: string) {
+async markFinalBoardingRowByPrevAccount(prevAccount: string, timeoutMs = 60000) {
   await this.navigateToFinalBoarding();
 
-  // 1) intento directo
-  let row = await this.tryFindRowHere(prevAccount);
+  const deadline = Date.now() + timeoutMs;
+  let refreshed = false;
 
-  // 2) quick filter
-  if (!row) row = await this.tryFilter(prevAccount);
+  while (Date.now() < deadline) {
+    await this.waitFinalBoardingGridReady(30000).catch(() => {});
 
-  // 3) paginado
-  if (!row) row = await this.tryPaginate(prevAccount);
+    // 1) directo
+    let row = await this.tryFindRowHere(prevAccount);
 
-  // 4) infinite scroll
-  if (!row) row = await this.tryInfiniteScroll(prevAccount);
+    // 2) quick search
+    if (!row) row = await this.tryFilterFinalBoarding(prevAccount);
 
-  // 5) refresh y reintentar una vez (rápido)
-  if (!row) {
-    const { refreshBtn, rows } = this.finalGrid;
-    if (await refreshBtn.count()) {
-      await refreshBtn.click({ timeout: 4000 }).catch(() => {});
-      await rows.first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => {});
-      row = await this.tryFindRowHere(prevAccount) ?? await this.tryFilter(prevAccount);
+    // 3) paginado
+    if (!row) row = await this.tryPaginateFinalBoarding(prevAccount);
+
+    // 4) virtual/infinite scroll
+    if (!row) row = await this.tryInfiniteScrollFinalBoarding(prevAccount);
+
+    if (row && (await row.isVisible().catch(() => false))) {
+      await row.scrollIntoViewIfNeeded().catch(() => {});
+
+      // ✅ checkbox: Kendo a veces no deja check() directo, usamos fallback al label
+      const input = row.locator('input.k-checkbox, input[type="checkbox"][role="checkbox"], input[type="checkbox"]').first();
+      const label = row.locator('label.k-checkbox-label, .k-checkbox-label').first();
+
+      try {
+        await input.check({ force: true });
+      } catch {
+        await label.click({ force: true }).catch(async () => {
+          const box = await input.boundingBox().catch(() => null);
+          if (box) await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        });
+      }
+
+      this.log(`[FinalBoarding] Fila "${prevAccount}" marcada correctamente.`);
+      return;
     }
+
+    // 5) refresh una sola vez dentro del loop
+    if (!refreshed) {
+      const { refreshBtn } = this.finalGrid;
+      if (await refreshBtn.count().catch(() => 0)) {
+        this.log('[FinalBoarding] PrevAccount no aparece aún → Refresh del grid...');
+        await refreshBtn.click().catch(() => {});
+        refreshed = true;
+        await this.page.waitForTimeout(1200);
+        continue;
+      }
+    }
+
+    await this.page.waitForTimeout(800);
   }
 
-  if (!row) {
-    throw new Error(`No encontré la fila con PrevAccount "${prevAccount}" en FinalBoarding.`);
-  }
-  await expect(row).toBeVisible({ timeout: 8000 });
+  // Debug útil si falla
+  const { rows } = this.finalGrid;
+  const sample = await rows.allInnerTexts().catch(() => []);
+  this.log(`[FinalBoarding] No encontré "${prevAccount}". Sample rows:\n- ${sample.slice(0, 8).join('\n- ')}`);
+  await this.safeShot('finalboarding_prev_not_found');
 
-  // marcar checkbox de la primera columna
-  const checkbox = row!.locator('td').first().locator('input[type="checkbox"]');
-  await checkbox.scrollIntoViewIfNeeded();
-  await checkbox.check({ force: true });
-
-  this.log?.(`[FinalBoarding] Fila "${prevAccount}" marcada correctamente.`);
+  throw new Error(`No encontré la fila con PrevAccount "${prevAccount}" en FinalBoarding.`);
 }
 
 // ===== Alias para tu step actual =====
@@ -2015,48 +2249,133 @@ private async mhTryInfiniteScroll(prev: string) {
   return null;
 }
 
-// 2) Afirmar fila "Migrated / Success" por Prev Account (con navegación y reintentos)
-async assertMigrationRowByPrev(prev: string) {
+// 2) Afirmar fila "Migrated / Success" por Prev Account
+// ✅ Ahora: loguea estados distintos, y si hay "Error" corta con mensaje claro.
+async assertMigrationRowByPrev(prev: string, opts?: {
+  timeoutMs?: number;
+  expectedBoarding?: RegExp;
+  expectedMigration?: RegExp;
+  failFastOnError?: boolean;
+}) {
+  const timeoutMs = opts?.timeoutMs ?? 180000;
+  const expectedBoarding = opts?.expectedBoarding ?? /Migrated/i;
+  const expectedMigration = opts?.expectedMigration ?? /Success/i;
+  const failFastOnError = opts?.failFastOnError ?? true;
+
   await this.navigateToMigrationHistory();
 
-  // pequeño bucle de reintento: a veces la fila aparece unos segundos después
-  let row: Locator | null = null;
-  for (let attempt = 0; attempt < 3 && !row; attempt++) {
-    // a) directo en vista actual
+  const deadline = Date.now() + timeoutMs;
+
+  let lastSnapshot = '';
+  let refreshTick = 0;
+
+  const normalize = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+  const readRowState = async (row: Locator) => {
+    const cells = row.locator('td');
+    const boardingStatus = normalize(await cells.nth(4).innerText().catch(() => ''));
+    const migrationStatus = normalize(await cells.nth(5).innerText().catch(() => ''));
+    const message = normalize(await cells.nth(6).innerText().catch(() => ''));
+    return { boardingStatus, migrationStatus, message };
+  };
+
+  while (Date.now() < deadline) {
+    // Buscar fila (reusa tus helpers existentes)
+    let row: Locator | null = null;
+
     row = await this.mhTryFindHere(prev);
-
-    // b) quick filter
     if (!row) row = await this.mhTryFilter(prev);
-
-    // c) infinite scroll
     if (!row) row = await this.mhTryInfiniteScroll(prev);
 
-    // d) refresh (una vez por intento si sigue sin estar)
-    if (!row) {
+    if (row) {
+      await row.scrollIntoViewIfNeeded().catch(() => {});
+
+      const { boardingStatus, migrationStatus, message } = await readRowState(row);
+
+      const snapshot =
+        `Prev="${prev}" | Boarding="${boardingStatus}" | Migration="${migrationStatus}" | Msg="${message.slice(0, 160)}"`;
+
+      // ✅ Log sólo cuando cambia algo (evita spam)
+      if (snapshot !== lastSnapshot) {
+        this.log(`[MigrationHistory] ${snapshot}`);
+        lastSnapshot = snapshot;
+      }
+
+      // ✅ Caso OK
+      if (expectedBoarding.test(boardingStatus) && expectedMigration.test(migrationStatus)) {
+        this.log(`[MigrationHistory] ✅ OK: Prev="${prev}" -> ${boardingStatus} / ${migrationStatus}`);
+        return;
+      }
+
+      // ✅ Caso terminal de error: cortamos y reportamos bien
+      if (failFastOnError && /error|failed/i.test(migrationStatus)) {
+        await this.safeShot('migration_history_error_status');
+
+        // best-effort: si existe botón "Full Message" le damos click para capturar texto completo
+        let fullMsg = message;
+        try {
+          const btn = row.getByRole('button', { name: /Full Message/i }).first();
+          if (await btn.isVisible().catch(() => false)) {
+            await btn.click({ timeout: 3000 }).catch(() => {});
+            const modal = this.page
+              .locator('.us-modal, .modal-content')
+              .filter({ hasText: /Full Message/i })
+              .first();
+
+            if (await modal.isVisible().catch(() => false)) {
+              fullMsg = normalize(await modal.innerText().catch(() => fullMsg));
+              // cerrar modal (best-effort)
+              await modal.getByRole('button', { name: /Close|OK|Cancel|X/i }).first().click().catch(() => {});
+            }
+          }
+        } catch {}
+
+        this.log(
+          `[MigrationHistory] ❌ ERROR terminal para Prev="${prev}". Boarding="${boardingStatus}" Migration="${migrationStatus}". FullMsg="${fullMsg}"`
+        );
+
+        throw new Error(
+          `Migration History ERROR para Prev="${prev}". Boarding="${boardingStatus}" Migration="${migrationStatus}". Msg="${fullMsg || message || '(sin mensaje)'}"`
+        );
+      }
+    } else {
+      // fila aún no aparece: log cada tanto
+      if (!lastSnapshot) {
+        this.log(`[MigrationHistory] Aún no aparece fila para Prev="${prev}". Esperando...`);
+        lastSnapshot = 'logged_not_found';
+      }
+    }
+
+    // Espera y refresco periódico (porque la grilla puede tardar en actualizar)
+    await this.page.waitForTimeout(2000);
+
+    refreshTick++;
+    if (refreshTick % 2 === 0) {
       const { refreshBtn, rows } = this.mhGrid;
-      if (await refreshBtn.count()) {
-        await refreshBtn.click({ timeout: 4000 }).catch(() => {});
-        await rows.first().waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+      if (await refreshBtn.count().catch(() => 0)) {
+        await refreshBtn.click().catch(() => {});
+        await rows.first().waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
       } else {
-        // sin botón: forzamos un reload suave
         await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
       }
       await this.page.waitForTimeout(800);
+      // reset para que vuelva a loguear cambios si aplica
+      lastSnapshot = '';
     }
   }
 
-  const isRowVisible = row ? await row.isVisible().catch(() => false) : false;
-  expect(isRowVisible, `No encontré la fila con Prev Account "${prev}" en Migration History.`)
-    .toBe(true);
+  await this.safeShot('migration_history_timeout');
+  throw new Error(
+    `Timeout esperando Migrated/Success para Prev="${prev}". Último estado: ${lastSnapshot || 'N/A'}`
+  );
+}
 
-  // 3) Validar columnas: Boarding Status = "Migrated" (col 5) y Migration Status = "Success" (col 6)
-  const boardingStatusCell = row!.locator('td[role="gridcell"][aria-colindex="5"], td.text-center').nth(4);
-  const migrationStatusCell = row!.locator('td[role="gridcell"][aria-colindex="6"], td.text-center').nth(5);
 
-  await expect(boardingStatusCell).toHaveText(/Migrated/i, { timeout: 8000 });
-  await expect(migrationStatusCell).toHaveText(/Success/i, { timeout: 8000 });
 
-  this.log?.(`[MigrationHistory] "${prev}" -> Migrated / Success OK.`);
+// 👇 helper: devuelve el Page correcto (si target es Frame => target.page())
+private getTargetPage(target: Page | import('@playwright/test').Frame): Page {
+  const anyTarget = target as any;
+  return typeof anyTarget.page === 'function' ? anyTarget.page() : (target as Page);
 }
 
 

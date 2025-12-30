@@ -166,6 +166,133 @@ async verifyBoardingTrackerCode() {
     await expect(uploaded).toHaveCount(expectedCount, { timeout: 90000 });
   }
 
+  // ======================
+// STEP 4 - Document Categories
+// ======================
+
+// Mapa esperado (por “keyword” dentro del filename)
+private expectedDocCategories(): Array<{ key: RegExp; category: string }> {
+  return [
+    { key: /HUD-1/i,     category: 'Copy HUD' },
+    { key: /Mortgage/i,  category: 'Deed of Trust or Mortgage' },
+    { key: /Note/i,      category: 'Promissory Note' },
+  ];
+}
+
+private uploadListItems() {
+  return this.page.locator('.k-upload-files > li.k-file[role="listitem"]');
+}
+
+private docItemByFilenameRegex(fileRegex: RegExp) {
+  // encuentra el <li> que contiene el nombre del archivo (div.my-0)
+  return this.uploadListItems()
+    .filter({ has: this.page.locator('div.my-0', { hasText: fileRegex }) })
+    .first();
+}
+
+private categoryButtonInDocItem(docItem: Locator) {
+  // Botón que muestra "Category: xxx"
+  return docItem.locator('button:has-text("Category:")').first();
+}
+
+private async readDocCategory(docItem: Locator): Promise<string> {
+  const btn = this.categoryButtonInDocItem(docItem);
+  const raw = (await btn.innerText().catch(() => '')) || '';
+  // ejemplo: "Category: Other documents"
+  const m = raw.match(/Category:\s*(.+)\s*$/i);
+  return (m?.[1] ?? '').trim();
+}
+
+private categoryModal() {
+  // Modal "Document Categoty" (ojo al typo que trae la UI)
+  return this.page.locator('.us-modal', {
+    has: this.page.locator('.us-modal-header__title', { hasText: /Document\s+Categoty/i })
+  }).first();
+}
+
+private async selectCategoryInModal(category: string) {
+  const modal = this.categoryModal();
+  await expect(modal).toBeVisible({ timeout: 30000 });
+
+  // Radio por nombre (usa aria-label del label)
+  const radio = modal.getByRole('radio', { name: new RegExp(`^${this.escapeRegex(category)}$`, 'i') }).first();
+
+  // Si no está visible por scroll, lo traemos
+  await radio.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(radio).toBeVisible({ timeout: 15000 });
+
+  // Marcar
+  try {
+    await radio.check({ force: true, timeout: 10000 });
+  } catch {
+    // fallback: click al label
+    await modal.locator('label.k-radio-label', { hasText: new RegExp(`^${this.escapeRegex(category)}$`, 'i') })
+      .first()
+      .click({ force: true });
+  }
+
+  // Save
+  const saveBtn = modal.getByRole('button', { name: /^Save$/i }).first();
+  await expect(saveBtn).toBeEnabled({ timeout: 15000 });
+  await saveBtn.click();
+
+  await expect(modal).toBeHidden({ timeout: 30000 });
+}
+
+private escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Verifica y corrige categorías de los 3 documentos subidos.
+ * - Si el documento ya está correcto: log y sigue.
+ * - Si está mal: abre modal, selecciona la categoría correcta, Save, y re-verifica.
+ */
+async ensureUploadedDocsAreCorrectlyCategorized() {
+  const expectations = this.expectedDocCategories();
+
+  for (const exp of expectations) {
+    const item = this.docItemByFilenameRegex(exp.key);
+    await expect(item).toBeVisible({ timeout: 60000 });
+
+    const current = await this.readDocCategory(item);
+    if (new RegExp(`^${this.escapeRegex(exp.category)}$`, 'i').test(current)) {
+      console.log(`✅ Category OK para ${exp.key}: "${current}"`);
+      continue;
+    }
+
+    console.warn(`⚠️ Category incorrecta para ${exp.key}. Actual="${current}" Esperada="${exp.category}". Corrigiendo...`);
+
+    const btn = this.categoryButtonInDocItem(item);
+    await expect(btn).toBeVisible({ timeout: 15000 });
+    await btn.scrollIntoViewIfNeeded().catch(() => {});
+    await btn.click({ force: true });
+
+    await this.selectCategoryInModal(exp.category);
+
+    // Revalidar que en la lista quedó bien
+    const btnAfter = this.categoryButtonInDocItem(item);
+    await expect(btnAfter).toContainText(new RegExp(`Category:\\s*${this.escapeRegex(exp.category)}`, 'i'), { timeout: 30000 });
+
+    console.log(`✅ Category corregida: ${exp.key} -> "${exp.category}"`);
+  }
+}
+
+/**
+ * (Opcional pero recomendado) Si aparece el toast de categorías, lo loguea y saca screenshot.
+ */
+async logToastIfCategoryErrorAppears() {
+  const toast = this.page.locator('#toast-container .toast.toast-error .toast-message').first();
+  const visible = await toast.isVisible().catch(() => false);
+  if (!visible) return;
+
+  const msg = (await toast.innerText().catch(() => '')).trim();
+  console.warn(`🧾 Toast error detectado: ${msg}`);
+
+  await this.page.screenshot({ path: `debug-toast-category-${Date.now()}.png`, fullPage: true });
+}
+
+
 async verifyRadioOptions(options: string[]) {
   for (const option of options) {
     const radioOption = this.page.locator('#questionBoarding div >> text=' + option);
