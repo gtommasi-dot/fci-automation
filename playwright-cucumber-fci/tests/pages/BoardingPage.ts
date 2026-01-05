@@ -5,15 +5,38 @@ export class BoardingPage {
 
     // Navegar al menú y sección de Boarding
     async goToBoardingPortfolio() {
-        // Abrir drop-down de Boarding
-        await this.page.locator('//*[@id="app"]/nav[2]/div/div[6]/div[1]').click();
-        // Click en Boarding Portfolio
-        await this.page.locator('//*[@id="app"]/nav[2]/div/div[6]/div[2]/ul/a').click();
-        // Validar URL
-        await expect(this.page).toHaveURL('https://tfciweb.myfci.com/boarding/portfolio');
-        // Esperar a que la sección esté visible (título o grid/table)
-        await this.page.waitForSelector('text=Boarding Portfolio');
-    }
+  // 1) Trigger del menú "Boarding" (el div que expande/colapsa)
+  const boardingTrigger = this.page
+    .locator('div.us-collapse-trigger.us-menu-item')
+    .filter({ has: this.page.locator('.us-menu-item__title', { hasText: 'Boarding' }) })
+    .first();
+
+  await expect(boardingTrigger).toBeVisible({ timeout: 30000 });
+  await boardingTrigger.scrollIntoViewIfNeeded();
+
+  // 2) Contenedor del submenu (el div.us-collapse dentro del mismo bloque)
+  const boardingSubmenu = boardingTrigger
+    .locator('xpath=ancestor::div[contains(@class,"us-menu-submenu")]')
+    .locator('div.us-collapse')
+    .first();
+
+  // 3) Si está colapsado (data-hidden="true"), lo abrimos
+  const hidden = await boardingSubmenu.getAttribute('data-hidden').catch(() => null);
+  if (hidden === 'true') {
+    await boardingTrigger.click();
+    // esperamos que se "abra" (data-hidden=false o al menos que el link sea visible)
+  }
+
+  // 4) Link real "Boarding Portfolio" (esto es lo más estable)
+  const portfolioLink = this.page.getByRole('link', { name: 'Boarding Portfolio' }).first();
+
+  await expect(portfolioLink).toBeVisible({ timeout: 30000 });
+  await portfolioLink.scrollIntoViewIfNeeded();
+  await portfolioLink.click();
+
+  // 5) Confirmación (opcional pero recomendable)
+  await expect(this.page).toHaveURL(/\/boarding\/portfolio/i, { timeout: 30000 });
+}
 
     // Click en Boarding Wizard (Add New Loan)
     async clickAddNewLoan() {
