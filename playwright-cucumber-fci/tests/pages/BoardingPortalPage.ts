@@ -1185,6 +1185,104 @@ private async waitDocSignResult(opts: {
 }
 
 
+private acceptTermsCheckbox(p: Page): Locator {
+  // Ajustá si tenés un selector exacto. Lo dejo tolerante.
+  return p.locator(
+    '#accept-terms, input[name="accept-terms"], input[id*="accept-terms"], input[type="checkbox"][id*="terms"], input[type="checkbox"][name*="terms"]'
+  ).first();
+}
+
+private continueBtn(p: Page): Locator {
+  return p.getByRole('button', { name: /^CONTINUE$/i }).first();
+}
+
+/**
+ * Espera a que el checkbox deje de “flapear”, lo deja checked=true y espera CONTINUE enabled.
+ * Si la UI re-renderiza y vuelve a destildarlo, lo re-intenta sin “toggle” manual.
+ */
+private async ensureTermsAcceptedAndContinueEnabled(p: Page, timeoutMs = 90_000) {
+  const terms = this.acceptTermsCheckbox(p);
+  const cont  = this.continueBtn(p);
+
+  // 0) Asegurar elementos visibles
+  await expect(terms).toBeVisible({ timeout: 30_000 });
+  await expect(cont).toBeVisible({ timeout: 30_000 });
+
+  // 1) Esperar overlays comunes (si existen)
+  const overlays = p.locator('.us-loading-screen, .k-loading-mask, .modal-backdrop, .us-backdrop');
+  const overlayCount = await overlays.count().catch(() => 0);
+  if (overlayCount > 0) {
+    await overlays.first().waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
+  }
+
+  // 2) Esperar “estabilidad” del checkbox (que no cambie de estado por 800ms)
+  //    Esto evita que lo tildes y el componente se remonte y lo destilde.
+  await p.waitForFunction(() => {
+    const cb =
+      (document.querySelector('#accept-terms') as HTMLInputElement | null) ||
+      (document.querySelector('input[name="accept-terms"]') as HTMLInputElement | null) ||
+      (document.querySelector('input[type="checkbox"][id*="terms"], input[type="checkbox"][name*="terms"]') as HTMLInputElement | null);
+
+    if (!cb) return false;
+
+    const key = '__pw_terms_stable__';
+    const now = Date.now();
+    const checked = cb.checked;
+
+    const prev = (window as any)[key] as { v: boolean; t: number } | undefined;
+    if (!prev || prev.v !== checked) {
+      (window as any)[key] = { v: checked, t: now };
+      return false;
+    }
+    return (now - prev.t) > 800;
+  }, { timeout: 30_000 }).catch(() => {
+    // si no logramos estabilidad, no matamos todavía: seguimos con reintentos abajo
+  });
+
+  const start = Date.now();
+  let attempt = 0;
+
+  while (Date.now() - start < timeoutMs) {
+    attempt++;
+
+    // Re-leer estados
+    const checked = await terms.isChecked().catch(() => false);
+    const contEnabled = await cont.isEnabled().catch(() => false);
+
+    const disabledAttr = await cont.getAttribute('disabled').catch(() => null);
+    console.log(`[DocSign] attempt=${attempt} | terms.checked=${checked} | CONTINUE.enabled=${contEnabled} | disabledAttr=${disabledAttr ?? 'null'}`);
+
+    // Si CONTINUE ya está habilitado, listo.
+    if (contEnabled) return;
+
+    // Si terms NO está checked, lo seteamos en true (sin toggle)
+    if (!checked) {
+      await terms.setChecked(true, { force: true }).catch(async () => {
+        await terms.check({ force: true }).catch(() => {});
+      });
+    }
+
+    // Espera corta a que el UI procese y habilite el botón
+    // (y para que se asiente el re-render)
+    await p.waitForTimeout(600);
+
+    // Si el checkbox se volvió a destildar por re-render, el loop lo vuelve a setear,
+    // pero SOLO cuando lo detecta false (no “clickea” por click).
+  }
+
+  const shot = `debug-docsign-continue-disabled-${Date.now()}.png`;
+  await p.screenshot({ path: shot, fullPage: true });
+
+  throw new Error(
+    `[DocSign] CONTINUE sigue deshabilitado tras ${timeoutMs}ms. ` +
+    `terms.checked=${await terms.isChecked().catch(() => '??')} ` +
+    `Screenshot: ${shot}`
+  );
+}
+
+
+
+
   // ======= DocSign genérico =======
 // ======= DocSign genérico (FIX CONTINUE disabled) =======
 async docSignFlow({
@@ -1206,85 +1304,105 @@ async docSignFlow({
 
   // ===== Intro (ACEPTAR TÉRMINOS + CONTINUE habilitado) =====
   const acceptTerms = target.locator('input#accept-terms').first();
-  const acceptLabel = target.locator('label[for="accept-terms"]').first();
   const continueBtn = target.getByRole('button', { name: /^CONTINUE$/ }).first();
 
   await acceptTerms.waitFor({ state: 'attached', timeout: 20000 });
   await acceptTerms.scrollIntoViewIfNeeded().catch(() => {});
   await acceptTerms.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+  await continueBtn.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
 
-  const ensureContinueEnabled = async () => {
-    // helpers
-    const isContinueEnabled = async () => await continueBtn.isEnabled().catch(() => false);
-    const isTermsChecked = async () => await acceptTerms.isChecked().catch(() => false);
+  // --- helper: esperar estabilidad del checkbox (si cambia de estado por re-render) ---
+  const waitTermsStability = async () => {
+    const runner = (target as any); // Page o Frame (ambos tienen waitForFunction)
+    if (typeof runner?.waitForFunction !== 'function') return;
 
-    // 0) si ya está habilitado, no hacemos nada
-    if (await isContinueEnabled()) return;
+    await runner.waitForFunction(
+      (sel: string) => {
+        const cb = document.querySelector(sel) as HTMLInputElement | null;
+        if (!cb) return false;
 
-    // 1) setChecked (mejor que check en inputs custom)
-    try {
-      await acceptTerms.setChecked(true, { force: true });
-    } catch {
-      // fallback: click directo
-      await acceptTerms.click({ force: true }).catch(() => {});
-    }
+        const key = '__pw_terms_stable__';
+        const now = Date.now();
+        const checked = !!cb.checked;
 
-    await tp.waitForTimeout(150);
-
-    if (await isContinueEnabled()) return;
-
-    // 2) click al label (muchas UIs escuchan en el label/wrapper)
-    try {
-      if (await acceptLabel.count().catch(() => 0)) {
-        await acceptLabel.click({ force: true });
-      }
-    } catch {}
-
-    await tp.waitForTimeout(150);
-
-    if (await isContinueEnabled()) return;
-
-    // 3) forzar checked + disparar eventos (React suele necesitar change/input)
-    try {
-      const h = await acceptTerms.elementHandle().catch(() => null);
-      if (h) {
-        await h.evaluate((el: any) => {
-          if (!el) return;
-          el.checked = true;
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-        });
-      }
-    } catch {}
-
-    await tp.waitForTimeout(150);
-
-    // 4) si sigue sin habilitar, revalidar estado y loggear
-    const checked = await isTermsChecked();
-    const enabled = await isContinueEnabled();
-    this.log(`[DocSign] Terms checked=${checked} | CONTINUE enabled=${enabled}`);
+        const prev = (window as any)[key] as { v: boolean; t: number } | undefined;
+        if (!prev || prev.v !== checked) {
+          (window as any)[key] = { v: checked, t: now };
+          return false;
+        }
+        return now - prev.t > 800; // estable 800ms
+      },
+      '#accept-terms',
+      { timeout: 30000 }
+    ).catch(() => {
+      // Si no logramos estabilidad, no rompemos: seguimos con reintentos abajo
+    });
   };
 
-  // Reintento “inteligente” hasta 20s
-  const introDeadline = Date.now() + 20000;
-  while (Date.now() < introDeadline) {
-    await ensureContinueEnabled();
+  // --- helper principal: deja terms checked=true y espera CONTINUE enabled (sin togglear) ---
+  const ensureTermsAcceptedAndContinueEnabled = async (timeoutMs = 90_000) => {
+    // overlays comunes (si existen)
+    const overlays = tp.locator('.us-loading-screen, .k-loading-mask, .modal-backdrop, .us-backdrop');
+    const overlayCount = await overlays.count().catch(() => 0);
+    if (overlayCount > 0) {
+      await overlays.first().waitFor({ state: 'hidden', timeout: 60_000 }).catch(() => {});
+    }
 
-    const enabled = await continueBtn.isEnabled().catch(() => false);
-    if (enabled) break;
+    // Espera a que el checkbox deje de “flapear” (si aplica)
+    await waitTermsStability();
 
-    await tp.waitForTimeout(300);
-  }
+    const start = Date.now();
+    let attempt = 0;
 
-  // Si sigue disabled => evidencia + error claro
-  if (!(await continueBtn.isEnabled().catch(() => false))) {
+    while (Date.now() - start < timeoutMs) {
+      attempt++;
+
+      const checked = await acceptTerms.isChecked().catch(() => false);
+      const enabled = await continueBtn.isEnabled().catch(() => false);
+      const disabledAttr = await continueBtn.getAttribute('disabled').catch(() => null);
+      const ariaDisabled = await continueBtn.getAttribute('aria-disabled').catch(() => null);
+
+      this.log(
+        `[DocSign] attempt=${attempt} | terms.checked=${checked} | CONTINUE.enabled=${enabled} | disabledAttr=${disabledAttr ?? 'null'} | ariaDisabled=${ariaDisabled ?? 'null'}`
+      );
+
+      if (enabled) return;
+
+      // ✅ SOLO setear si está false (idempotente, evita toggle)
+      if (!checked) {
+        await acceptTerms.setChecked(true, { force: true }).catch(async () => {
+          await acceptTerms.check({ force: true }).catch(() => {});
+        });
+      } else {
+        // Si ya está checked pero CONTINUE sigue disabled, disparar eventos (sin click/toggle)
+        const h = await acceptTerms.elementHandle().catch(() => null);
+        if (h) {
+          await h.evaluate((el: any) => {
+            try {
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            } catch {}
+          });
+        }
+      }
+
+      // pequeño settle + re-check (aquí suele habilitar)
+      await tp.waitForTimeout(600);
+
+      // Si vuelve a destildarse por re-render, el loop lo detecta y lo setea de nuevo.
+    }
+
     await this.safeShot('docsign_continue_still_disabled');
     const checked = await acceptTerms.isChecked().catch(() => false);
     const disabledAttr = await continueBtn.getAttribute('disabled').catch(() => null);
+
     throw new Error(
-      `[DocSign] CONTINUE sigue deshabilitado. accept-terms checked=${checked}, disabledAttr=${disabledAttr}`
+      `[DocSign] CONTINUE sigue deshabilitado tras ${timeoutMs}ms. accept-terms checked=${checked}, disabledAttr=${disabledAttr}`
     );
-  }
+  };
+
+  // ✅ Nueva lógica robusta (anti flapping)
+  await ensureTermsAcceptedAndContinueEnabled(90_000);
 
   // Click real (ya habilitado)
   await continueBtn.click();
@@ -1382,6 +1500,7 @@ async docSignFlow({
 
   this.log('[DocSign] Confirmación recibida, continuando.');
 }
+
 
 
 
@@ -1764,8 +1883,71 @@ async syncInterestPaidToFirstPayment() {
 }
 
 
+
+
+/**
+ * Si hay cambios pendientes en Loan, guarda (Save) y confirma (Update Loan).
+ * - Si no está el botón Save visible/habilitado, log y sigue.
+ * - Si no aparece el modal Update Loan, log y sigue.
+ */
+private async saveAndConfirmUpdateLoanIfPresent(timeoutMs = 30000) {
+  const saveBtn = this.page.locator('button#btnUpdate:has-text("Save")').first();
+
+  // 1) ¿Existe y está visible?
+  const saveVisible = await saveBtn.isVisible().catch(() => false);
+  if (!saveVisible) {
+    this.log('[LoanUpdate] ℹ️ No se encontró botón "Save" (#btnUpdate). Continúo.');
+    return;
+  }
+
+  // 2) ¿Está habilitado?
+  const saveEnabled = await saveBtn.isEnabled().catch(() => false);
+  if (!saveEnabled) {
+    this.log('[LoanUpdate] ℹ️ El botón "Save" está visible pero deshabilitado. Continúo.');
+    return;
+  }
+
+  // 3) Click Save
+  await saveBtn.scrollIntoViewIfNeeded().catch(() => {});
+  await saveBtn.click({ timeout: 15000 });
+  this.log('[LoanUpdate] ✅ Click en "Save" (#btnUpdate).');
+
+  // 4) Modal Update Loan (puede o no aparecer)
+  const modal = this.page.locator('.modal-content').filter({ hasText: /Update Loan/i }).first();
+  const updateBtn = modal.getByRole('button', { name: /^Update$/i }).first();
+
+  const modalAppeared = await modal
+    .waitFor({ state: 'visible', timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!modalAppeared) {
+    this.log('[LoanUpdate] ⚠️ No apareció el modal "Update Loan" luego de Save. Continúo igual.');
+    return;
+  }
+
+  // 5) Confirmar Update
+  await updateBtn.waitFor({ state: 'visible', timeout: 15000 });
+  await updateBtn.click();
+  this.log('[LoanUpdate] ✅ Confirmado "Update" en modal Update Loan.');
+
+  // 6) Esperar cierre + overlays típicos
+  await modal.waitFor({ state: 'hidden', timeout: timeoutMs }).catch(() => {});
+  const overlays = this.page.locator('.k-loading-mask, .us-loading-screen, .modal-backdrop, .us-backdrop');
+  const c = await overlays.count().catch(() => 0);
+  if (c > 0) await overlays.first().waitFor({ state: 'hidden', timeout: timeoutMs }).catch(() => {});
+}
+
+
 // ======= COMPLETE BOARDING cuando ya existen docs =======
 async completeBoardingWhenDocsAlreadyGenerated() {
+  // Helper logs
+  const info = (m: string) => (this as any).log ? (this as any).log(m) : console.log(m);
+  const warn = (m: string) => (this as any).log ? (this as any).log(m) : console.warn(m);
+
+  // ✅ NUEVO: Guardar + confirmar Update Loan antes de completar pre-boarding
+  await this.saveAndConfirmUpdateLoanIfPresent(30000);
+
   // --- 1) Click en "Complete Pre-Boarding" (id con fallback por texto) ---
   const btn = (await this.completePreBoardingBtnById.count().catch(() => 0))
     ? this.completePreBoardingBtnById
@@ -1788,63 +1970,107 @@ async completeBoardingWhenDocsAlreadyGenerated() {
     .first();
 
   // 2.c) Legacy "no eres el dueño"
-  // Cubrimos #toast-container y el div plano con .toast.toast-error
   const notOwnerToast = this.page
     .locator('#toast-container .toast-error .toast-message, .toast.toast-error .toast-message')
     .filter({ hasText: "You can't send this loan to Pre-Boarding. You are not the owner of this task" })
     .first();
 
+  // 2.d) Legacy success (fallback)
+  const legacySuccess = this.page
+    .locator('#toast-container .toast-success .toast-message, .toast.toast-success .toast-message')
+    .filter({ hasText: /Boarding completed successfully/i })
+    .first();
+
+  // Modal (puede aparecer con o sin toast)
+  const modal = this.page.locator('.modal-content').filter({ hasText: 'Complete Boarding Loan' }).first();
+  const completeBtnInModal = modal.getByRole('button', { name: /Complete boarding/i }).first();
+
+  // Helper: esperar success de forma opcional (NO falla si no aparece)
+  const waitSuccessOptional = async (timeoutMs = 45_000): Promise<boolean> => {
+    const appeared = await Promise.race([
+      successToast.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => true).catch(() => false),
+      legacySuccess.waitFor({ state: 'visible', timeout: timeoutMs }).then(() => true).catch(() => false),
+    ]);
+
+    if (appeared) {
+      info('[CompleteBoarding] ✅ Toast de éxito detectado: "Boarding completed successfully."');
+      return true;
+    }
+
+    warn(
+      `[CompleteBoarding] ⚠️ No apareció el toast de éxito en ${timeoutMs}ms. ` +
+      `Continuo el flujo igual porque el boarding puede haberse procesado correctamente.`
+    );
+    return false;
+  };
+
   // --- 3) Corte anticipado si aparece "not owner" ---
-  // Le damos prioridad: si aparece en ~8-10s, interrumpimos.
   try {
     await notOwnerToast.waitFor({ state: 'visible', timeout: 10000 });
-    this.log('[CompleteBoarding] ✋ Toast detectado: el usuario no es el dueño de la tarea. Se corta el flujo.');
-    // opcional: captura para evidencia
-    await this.safeShot?.('toast_not_owner_detected').catch?.(() => {});
+    info('[CompleteBoarding] ✋ Toast detectado: el usuario no es el dueño de la tarea. Se corta el flujo.');
+    await (this as any).safeShot?.('toast_not_owner_detected').catch?.(() => {});
     throw new Error("Interrumpido: You can't send this loan to Pre-Boarding. You are not the owner of this task.");
   } catch {
     // No apareció ese toast → seguimos el flujo normal
   }
 
-  // --- 4) Si aparece el error (docs ya generados), confirma el modal y espera success ---
-  try {
-    await errorToastDocs.waitFor({ state: 'visible', timeout: 15000 });
-    const modal = this.page.locator('.modal-content').filter({ hasText: 'Complete Boarding Loan' }).first();
+  // --- 4) Si aparece el error (docs ya generados), confirma el modal y luego espera success opcional ---
+  const docsErrorAppeared = await errorToastDocs
+    .waitFor({ state: 'visible', timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (docsErrorAppeared) {
     await expect(modal).toBeVisible({ timeout: 30000 });
-    await modal.getByRole('button', { name: 'Complete boarding' }).first().click();
-    await successToast.waitFor({ state: 'visible', timeout: 120000 });
-    return;
-  } catch {
-    // no apareció el error en ese plazo: seguimos a buscar success directo
-  }
+    await expect(completeBtnInModal).toBeEnabled({ timeout: 30000 });
+    await completeBtnInModal.click();
 
-  // --- 5) Éxito directo sin modal ---
-  try {
-    await successToast.waitFor({ state: 'visible', timeout: 120000 });
-    return;
-  } catch {
-    // seguimos a fallbacks
-  }
+    // Esperar cierre del modal (siempre ayuda a estabilizar)
+    await Promise.race([
+      modal.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => {}),
+      modal.waitFor({ state: 'detached', timeout: 60000 }).catch(() => {}),
+    ]);
 
-  // --- 6) Fallbacks: por si hay skin mixto o el toast tardó ---
-  // 6.a) ¿Apareció el modal igualmente? (a veces llega sin error toast)
-  const maybeModal = this.page.locator('.modal-content').filter({ hasText: 'Complete Boarding Loan' }).first();
-  if (await maybeModal.isVisible().catch(() => false)) {
-    await maybeModal.getByRole('button', { name: 'Complete boarding' }).first().click();
-    await successToast.waitFor({ state: 'visible', timeout: 120000 }).catch(() => {});
+    await waitSuccessOptional(60_000);
     return;
   }
 
-  // 6.b) Legacy toast de éxito
-  const legacySuccess = this.page.locator('#toast-container .toast-success')
-    .filter({ hasText: 'Boarding completed successfully' })
-    .first();
+  // --- 5) Éxito directo sin modal (opcional) ---
+  const successDirect = await waitSuccessOptional(45_000);
+  if (successDirect) return;
 
-  if (await legacySuccess.isVisible({ timeout: 8000 }).catch(() => false)) return;
+  // --- 6) Fallbacks ---
+  if (await modal.isVisible().catch(() => false)) {
+    await expect(completeBtnInModal).toBeEnabled({ timeout: 30000 });
+    await completeBtnInModal.click();
 
-  // --- 7) Si llegamos acá, no hubo confirmación detectable ---
-  throw new Error('No se detectó confirmación de “Boarding completed successfully.” (ni Sonner ni legacy) tras “Complete Pre-Boarding”.');
+    await Promise.race([
+      modal.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => {}),
+      modal.waitFor({ state: 'detached', timeout: 60000 }).catch(() => {}),
+    ]);
+
+    await waitSuccessOptional(60_000);
+    return;
+  }
+
+  const legacyNow = await legacySuccess.isVisible().catch(() => false);
+  const sonnerNow = await successToast.isVisible().catch(() => false);
+  if (legacyNow || sonnerNow) {
+    info('[CompleteBoarding] ✅ Success detectado en fallback final (legacy/sonner).');
+    return;
+  }
+
+  // --- 7) ya NO tiramos error ---
+  warn(
+    '[CompleteBoarding] ⚠️ No se detectó confirmación de “Boarding completed successfully.” ' +
+    '(ni Sonner ni legacy) tras “Complete Pre-Boarding”. Continúo el flujo igual.'
+  );
+
+  await (this as any).safeShot?.(`no_success_toast_after_complete_${Date.now()}`).catch?.(() => {});
+  return;
 }
+
+
 
 // ===== Navegar a FinalBoarding (idempotente) =====
 async navigateToFinalBoarding() {

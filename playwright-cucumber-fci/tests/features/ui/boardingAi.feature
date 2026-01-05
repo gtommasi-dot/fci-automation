@@ -1,6 +1,6 @@
 
 Feature: Boarding AI Process
-  @boardingAi @e2e @wip
+  @boardingAi @e2e @wip @ui
   Scenario: Completar los pasos del 1 al 13 del proceso Boarding AI
     Given que ingreso a la página de Boarding
     Then debería ver el título "Step 1: Are you currently a lender with FCI Lender Services?"
@@ -85,7 +85,7 @@ Feature: Boarding AI Process
 
 
 
-  @boardingAibroker @e2e @wip
+  @boardingAibroker @e2e @wip @ui
 Scenario: Completar Boarding AI con broker en Step 5 (Yes + búsqueda + spread/fees)
   Given que ingreso a la página de Boarding
   Then debería ver el título "Step 1: Are you currently a lender with FCI Lender Services?"
@@ -153,7 +153,7 @@ Scenario: Completar Boarding AI con broker en Step 5 (Yes + búsqueda + spread/f
   Then proceso y firmo el LSA
 
 
-    @boardingAiCardPayment @e2e @wip
+    @boardingAiCardPayment @e2e @wip @ui
     Scenario: Completar Pago de tarjeta en Step 1 y luego continuar hasta firmar LSA 
     Given que ingreso a la página de Boarding
     Then debería ver el título "Step 1: Are you currently a lender with FCI Lender Services?"
@@ -216,7 +216,7 @@ Scenario: Completar Boarding AI con broker en Step 5 (Yes + búsqueda + spread/f
     
     
 
-    @boardingAiGeorgia @e2e @wip
+    @boardingAiGeorgia @e2e @wip @ui
     Scenario: Completar los pasos del 1 al 13 del proceso Boarding AI , Seleccionando Georgia en el Step 10
       Given que ingreso a la página de Boarding
       Then debería ver el título "Step 1: Are you currently a lender with FCI Lender Services?"
