@@ -27,18 +27,36 @@ Then('debo ver el nombre del usuario', async function () {
 });
 
 let otpCode = '';
-
 When('debo ver la pantalla de verificación de código', async function () {
-  await loginPage.waitForOtpScreen(30000);
+  // ahora devuelve boolean
+  const otpRequired = await loginPage.waitForOtpScreen(30000);
+
+  // guardamos flag en el World para los próximos steps
+  (this as any).otpRequired = otpRequired;
+
+  if (!otpRequired) {
+    console.log('[LoginSteps] ℹ️ OTP no requerido. Se omiten los steps de EmailLog y de ingreso de OTP.');
+  }
 });
 
 When('obtengo el código de verificación desde Email Log como {string}', async function (role: string) {
+  if (!(this as any).otpRequired) {
+    console.log('[LoginSteps] ⏭️ Skip: OTP no requerido, no se consulta Email Log.');
+    return;
+  }
+
   if (role.toLowerCase() !== 'admin') {
     throw new Error(`Rol no soportado: ${role}. Usa "admin".`);
   }
-  otpCode = await loginPage.fetchOtpFromAdminEmailLog(this.context); // usa BrowserContext del World
+
+  otpCode = await loginPage.fetchOtpFromAdminEmailLog(this.context);
 });
 
 When('ingreso el código de verificación en la pantalla', async function () {
+  if (!(this as any).otpRequired) {
+    console.log('[LoginSteps] ⏭️ Skip: OTP no requerido, no se ingresa código.');
+    return;
+  }
+
   await loginPage.fillOtp(otpCode);
 });

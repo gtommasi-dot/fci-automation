@@ -334,6 +334,7 @@ wsl --shutdown
 ## Checklist de ejecución (local)
 
 1) `.env` configurado  
+
 2) `npm install`  
 3) `npx playwright install`  
 4) (Opcional) ReportPortal levantado (`http://localhost:8085`)  

@@ -16,6 +16,6 @@ Feature: Letter Request External
     | loan      | zip   | tin  | authType  |
      | 399383445 | 02740 | 6789 | Borrower  |
      | 399383478	| 94103 | 6789 | Lender    |
-     | 399393930 | 60621 | 6789 | Broker    |
+     | 399579695 | 90806 | 6789 | Broker    |
      | 399442479 | 10467 | 6789 | Broker    |
      | 399449073 | 90039 | 6789 | Borrower  |

@@ -4,14 +4,42 @@ export class FciInvoiceCardPage {
   constructor(private page: Page) {}
 
   // Ir a la sección Fci Invoices
-  async goToFciInvoices() {
+   async goToFciInvoices() {
     const { page } = this;
 
-    // Click en el ítem de menú (dejo tu XPath original)
-    await page.locator('xpath=//*[@id="app"]/nav[2]/div/a[4]').click();
+    // ✅ Si ya estamos en la página destino, no hace falta click
+    if (/\/invoice\/pending/i.test(page.url())) {
+      // sigue igual con tu validación/espera
+      await expect(page).toHaveURL(/.*\/invoice\/pending/i);
+      return;
+    }
+
+    // --- 1) Mejor opción: link por role + name ---
+    const byRole = page.getByRole('link', { name: /^FCI Invoices$/ }).first();
+    if (await byRole.isVisible().catch(() => false)) {
+      await byRole.scrollIntoViewIfNeeded();
+      await byRole.click();
+    } else {
+      // --- 2) Muy estable: href directo (si existe en el DOM) ---
+      const byHref = page.locator('a[href="/invoice/pending"], a[href*="/invoice/pending"]').first();
+      if (await byHref.isVisible().catch(() => false)) {
+        await byHref.scrollIntoViewIfNeeded();
+        await byHref.click();
+      } else {
+        // --- 3) Fallback: click en el item de menú que contiene el span "FCI Invoices" ---
+        const byTitleSpan = page
+          .locator('.us-menu-item, a.us-menu-item')
+          .filter({ has: page.locator('span.us-menu-item__title', { hasText: /^FCI Invoices$/ }) })
+          .first();
+
+        await expect(byTitleSpan).toBeVisible({ timeout: 30000 });
+        await byTitleSpan.scrollIntoViewIfNeeded();
+        await byTitleSpan.click();
+      }
+    }
 
     // Validar URL correcta
-    await expect(page).toHaveURL(/.*\/invoice\/pending/);
+    await expect(page).toHaveURL(/.*\/invoice\/pending/i, { timeout: 30000 });
 
     // Intentar esperar la tabla, pero si no se hace visible no fallamos
     try {

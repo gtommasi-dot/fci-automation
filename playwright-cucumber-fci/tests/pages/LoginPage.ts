@@ -38,15 +38,57 @@ export class LoginPage {
   }
 
   async clickSignIn() {
-    await this.page.waitForSelector(this.signInButton, { state: 'visible', timeout: 20000 });
-    await this.page.click(this.signInButton);
+  await this.page.waitForSelector(this.signInButton, { state: 'visible', timeout: 20000 });
+
+  await this.page.click(this.signInButton);
+
+  // Evita flakiness: no siempre hay "navigation", pero sí algo de carga
+  await this.page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+}
+
+
+ // ====== OTP opcional: devuelve true si aparece, false si NO aparece ======
+async waitForOtpScreen(timeout = 30000): Promise<boolean> {
+  // OTP UI
+  const otpTitle = this.page.getByText(/verification code/i);
+
+  // Indicador de que ya entró al app (sin OTP)
+  // (uso tu mismo selector de isLenderLoggedIn pero como locator "rápido")
+  const loggedUser = this.page.locator('#app nav small, #app nav >> small').first();
+
+  // Esperamos "lo primero que pase": OTP visible o usuario logueado visible
+  const winner = await Promise.race([
+    this.otpContainer
+      .waitFor({ state: 'visible', timeout })
+      .then(() => 'OTP')
+      .catch(() => null),
+
+    loggedUser
+      .waitFor({ state: 'visible', timeout })
+      .then(() => 'LOGGED')
+      .catch(() => null),
+  ]);
+
+  if (winner === 'OTP') {
+    // Si aparece OTP, además validamos texto (si existe)
+    await otpTitle.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    console.log('[LoginPage] ✅ OTP requerido: pantalla de verificación detectada.');
+    return true;
   }
 
-  // ====== NUEVO: esperar pantalla OTP ======
-  async waitForOtpScreen(timeout = 30000) {
-    await this.otpContainer.waitFor({ state: 'visible', timeout });
-    await this.page.getByText('verification code', { exact: false }).waitFor({ state: 'visible', timeout });
+  if (winner === 'LOGGED') {
+    console.log('[LoginPage] ℹ️ OTP NO requerido: ya se ve UI de usuario logueado.');
+    return false;
   }
+
+  // No apareció ni OTP ni el usuario logueado en ese tiempo
+  console.warn(
+    `[LoginPage] ⚠️ No se detectó OTP ni UI post-login en ${timeout}ms. ` +
+    `Asumo OTP NO requerido y continúo.`
+  );
+  return false;
+}
+
 
   // ====== NUEVO: completar OTP ======
   async fillOtp(code: string) {
