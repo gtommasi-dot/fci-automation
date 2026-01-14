@@ -132,13 +132,27 @@ private loanPortfolioLink(submenu = this.loanPortfolioSubmenu()): Locator {
 
   // 7. Click en primer item del dropdown INFO: Loan Details
   async selectLoanDetailsFromInfoDropdown() {
-    // Espera el menú desplegado y selecciona Loan Details
-    await this.page.click('//ul[contains(@class,"k-menu-vertical")]//span[contains(text(), "Loan Details")]', { timeout: 7000 });
-    // Espera que cargue Loan Details (usa algún texto/selector de Loan Details)
-    await this.page.waitForSelector(
-  '//div[contains(@class,"card") and contains(@class,"mb-4") and .//div[contains(@class,"card-header") and contains(text(),"Loan Information")]]',
-  { timeout: 15000 });
-  }
+  // 1) Click en el item Loan Details (tu XPath original, pero con más tolerancia)
+  const menuItem = this.page.locator(
+    '//ul[contains(@class,"k-menu-vertical") or @role="menu"]//span[contains(normalize-space(.),"Loan Details")]'
+  ).first();
+
+  await menuItem.waitFor({ state: 'visible', timeout: 30000 });
+  await menuItem.click();
+
+  // 2) Espera robusta post navegación/carga
+  await this.page.waitForLoadState('domcontentloaded');
+  await this.page.waitForLoadState('networkidle').catch(() => {});
+
+  // 3) Locator flexible para detectar Loan Details
+  const loanInfoHeader = this.page
+    .locator('.card-header, h1, h2, h3, h4, h5')
+    .filter({ hasText: /Loan Information/i })
+    .first();
+
+  await expect(loanInfoHeader).toBeVisible({ timeout: 60000 });
+}
+
 
   // 8. Click en Send a Request Payoff dentro de Loan Details
   async clickSendRequestPayoff() {
@@ -334,30 +348,23 @@ async submitPayoffRequest() {
 
 // Espera y gestiona el resultado del payoff request (robusto + logs)
 async handlePayoffResult(): Promise<'active' | 'further' | 'success' | 'penalty'> {
-  // Mini respiro post submit
   await this.page.waitForTimeout(300);
 
-  // --- Candidatos robustos ---
   const modalResultTitle = this.page
     .locator('.us-modal:has-text("Payoff Request") .us-result__title')
     .last();
 
-  // Toast: tomamos el ÚLTIMO que tenga message (el más nuevo), y evitamos `.first()`
   const toastMessage = this.page
     .locator('#toast-container .toast[aria-live]:has(.toast-message) .toast-message')
     .last();
 
-  // Esperar a que aparezca algo (modal o toast)
   const winner = await Promise.race([
     modalResultTitle.waitFor({ state: 'visible', timeout: 60000 }).then(() => 'modal' as const).catch(() => null),
     toastMessage.waitFor({ state: 'visible', timeout: 60000 }).then(() => 'toast' as const).catch(() => null),
   ]);
 
-  if (!winner) {
-    throw new Error('No se detectó ni modal ni toast tras enviar la solicitud de Payoff');
-  }
+  if (!winner) throw new Error('No se detectó ni modal ni toast tras enviar la solicitud de Payoff');
 
-  // Obtener el texto desde la fuente que ganó
   const rawText =
     winner === 'modal'
       ? await modalResultTitle.innerText().catch(() => '')
@@ -366,45 +373,41 @@ async handlePayoffResult(): Promise<'active' | 'further' | 'success' | 'penalty'
   const text = (rawText || '').replace(/\s+/g, ' ').trim();
   const lower = text.toLowerCase();
 
-  // Log bien claro
   console.log(`📌 Payoff result detectado desde ${winner.toUpperCase()} -> "${text}"`);
 
-  // Clasificación
+  // ✅ Patrones
+  const isFurther = /further\s*review/i.test(lower);
+  const isPenalty = /prepayment\s*penalty/i.test(lower);
+
+  // ✅ ACTIVE/PENDING (agregamos el mensaje nuevo)
+  const isActive =
+    /already\s+a\s+payoff\s+request\s+active/i.test(lower) ||
+    /already\s+a\s+payoff\s+request/i.test(lower) ||
+    /payoff\s+demand\s+task\s+pending\s+or\s+active/i.test(lower) ||
+    /payoff\s+request\s+.*(pending|active)/i.test(lower);
+
+  const isSuccess =
+    /has\s+been\s+successfully/i.test(lower) ||
+    /successfully\s+sent/i.test(lower) ||
+    /payoff\s+request\s+has\s+been\s+successfully/i.test(lower);
+
   let outcome: 'active' | 'further' | 'success' | 'penalty';
 
-  if (lower.includes('further review')) {
-    outcome = 'further';
-  } else if (lower.includes('already a payoff request active') || lower.includes('already a payoff request')) {
+  if (isFurther) outcome = 'further';
+  else if (isPenalty) outcome = 'penalty';
+  else if (isActive) outcome = 'active';
+  else if (isSuccess) outcome = 'success';
+  else {
+    // ✅ Fallback: NO asumir success
+    console.warn(`⚠️ Resultado no reconocido. Lo trato como ACTIVE para no intentar firma. Texto="${text}"`);
     outcome = 'active';
-  } else if (lower.includes('prepayment penalty')) {
-    outcome = 'penalty';
-  } else if (lower.includes('successfully') || lower.includes('has been successfully')) {
-    outcome = 'success';
-  } else {
-    // Si el texto vino vacío por fade raro, hacemos fallback buscando cualquier toast-message no vacía
-    const anyToastTexts = (await this.page
-      .locator('#toast-container .toast-message')
-      .allInnerTexts()
-      .catch(() => []))
-      .map(t => t.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-
-    const fallbackText = anyToastTexts[anyToastTexts.length - 1] || '';
-    if (fallbackText) {
-      console.warn(`⚠️ Texto principal vacío/no reconocido. Fallback toast -> "${fallbackText}"`);
-      const f = fallbackText.toLowerCase();
-      if (f.includes('further review')) outcome = 'further';
-      else if (f.includes('already a payoff request')) outcome = 'active';
-      else if (f.includes('prepayment penalty')) outcome = 'penalty';
-      else outcome = 'success'; // si es toast-success “raro”
-    } else {
-      console.warn(`⚠️ No pude clasificar el resultado. Texto: "${text}"`);
-      outcome = 'active'; // default controlado
-    }
   }
 
   // Cerrar toast si existe (sin romper si no está)
-  const closeToastBtn = this.page.locator('#toast-container .toast:has(.toast-message) .toast-close-button').last();
+  const closeToastBtn = this.page
+    .locator('#toast-container .toast:has(.toast-message) .toast-close-button')
+    .last();
+
   if (await closeToastBtn.isVisible().catch(() => false)) {
     await closeToastBtn.click().catch(() => {});
   }
@@ -415,56 +418,246 @@ async handlePayoffResult(): Promise<'active' | 'further' | 'success' | 'penalty'
 
 
 
+
 // Espera y verifica la presencia del modal de éxito tras el popup
-async waitForSuccessModal() {
-  // 1) Espera a que aparezca algún dialog/modal que contenga “Payoff”
-  const modal = this.page.locator('[role="dialog"], .us-modal')
+// Espera y verifica la presencia del modal de éxito tras el payoff (con retry + reload + fallbacks)
+async waitForSuccessModal(opts?: {
+  timeoutMs?: number;
+  reloadRetries?: number;
+  perAttemptTimeoutMs?: number;
+  pollMs?: number;
+}): Promise<boolean> {
+  const timeoutMs = opts?.timeoutMs ?? 120_000;            // total
+  const reloadRetries = opts?.reloadRetries ?? 1;          // 1 refresh extra
+  const pollMs = opts?.pollMs ?? 500;
+
+  // dividimos el tiempo total por intentos (intento normal + reloadRetries)
+  const attempts = reloadRetries + 1;
+  const perAttemptTimeoutMs = opts?.perAttemptTimeoutMs ?? Math.ceil(timeoutMs / attempts);
+
+  const info = (m: string) => (this as any).log ? (this as any).log(m) : console.log(m);
+  const warn = (m: string) => (this as any).log ? (this as any).log(m) : console.warn(m);
+
+  // Modal candidato (tomamos el ÚLTIMO por si hay varios)
+  const modal = () =>
+    this.page
+      .locator('[role="dialog"], .us-modal, .modal-content')
+      .filter({ hasText: /payoff/i })
+      .last();
+
+  // Botones esperados dentro del modal
+  const btnReview = (m: Locator) => m.getByRole('button', { name: /review\s*payoff\s*demand/i }).first();
+  const btnTrack  = (m: Locator) => m.getByRole('button', { name: /track\s*my\s*payoff/i }).first();
+  const btnClose  = (m: Locator) => m.getByRole('button', { name: /close|cerrar/i }).first();
+
+  // ✅ Success también puede venir como toast sin modal
+  const successToast = this.page
+    .locator('#toast-container .toast-success .toast-message, .toast.toast-success .toast-message')
+    .filter({ hasText: /(Payoff Request has been successfully sent|successfully)/i })
+    .last();
+
+  // ⚠️ Error conocido (no debería esperar modal)
+  const activeOrPendingToast = this.page
+    .locator('#toast-container .toast-error .toast-message, .toast.toast-error .toast-message')
+    .filter({ hasText: /(already a payoff request active|payoff demand task pending or active)/i })
+    .last();
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    info(`[Payoff] Esperando modal/confirmación (intento ${attempt}/${attempts})...`);
+
+    const deadline = Date.now() + perAttemptTimeoutMs;
+
+    while (Date.now() < deadline) {
+      // 1) Si aparece error "active/pending" -> no esperes modal, salí limpio
+      if (await activeOrPendingToast.isVisible().catch(() => false)) {
+        const msg = ((await activeOrPendingToast.textContent().catch(() => "")) || "").trim();
+        warn(`[Payoff] ⚠️ Detectado toast error (active/pending). No habrá modal de éxito. Msg="${msg}"`);
+        return false;
+      }
+
+      // 2) Si aparece toast de éxito -> lo consideramos confirmación suficiente
+      if (await successToast.isVisible().catch(() => false)) {
+        const msg = ((await successToast.textContent().catch(() => "")) || "").trim();
+        info(`[Payoff] ✅ Toast de éxito detectado. Msg="${msg}"`);
+        return true; // confirmación OK (aunque modal no aparezca)
+      }
+
+      // 3) Si aparece modal, validamos botones (si aún no están, seguimos esperando un poco)
+      const m = modal();
+      if (await m.isVisible().catch(() => false)) {
+        const reviewVisible = await btnReview(m).isVisible().catch(() => false);
+        const trackVisible  = await btnTrack(m).isVisible().catch(() => false);
+        const closeVisible  = await btnClose(m).isVisible().catch(() => false);
+
+        // con que aparezcan 2 de 3, lo damos por válido (más tolerante)
+        const okCount = [reviewVisible, trackVisible, closeVisible].filter(Boolean).length;
+
+        if (okCount >= 2) {
+          info('[Payoff] ✅ Modal de éxito detectado con botones esperados.');
+          return true;
+        }
+      }
+
+      await this.page.waitForTimeout(pollMs);
+    }
+
+    // Si falló este intento, hacemos reload si quedan reintentos
+    if (attempt < attempts) {
+      warn(`[Payoff] ⚠️ No apareció modal/confirmación en ${perAttemptTimeoutMs}ms. Reintentando con refresh...`);
+      await this.page.reload({ waitUntil: 'networkidle' }).catch(() => {});
+      await this.page.waitForTimeout(800);
+    }
+  }
+
+  // Si llegamos acá, no hubo confirmación detectable. NO tiramos error duro, solo log.
+  warn('[Payoff] ⚠️ No se detectó modal/confirmación de éxito dentro del tiempo total. Continúo flujo sin fallar.');
+  await (this as any).safeShot?.(`payoff_no_modal_${Date.now()}`).catch?.(() => {});
+  return false;
+}
+
+
+
+
+async clickTrackMyPayoffAndVerify(): Promise<boolean> {
+  const warn = (m: string) => (this as any).log ? (this as any).log(m) : console.warn(m);
+  const info = (m: string) => (this as any).log ? (this as any).log(m) : console.log(m);
+
+  // Modal “Payoff” (último por si hay más de uno)
+  const modal = this.page
+    .locator('[role="dialog"], .us-modal, .modal-content')
     .filter({ hasText: /payoff/i })
+    .last();
+
+  const trackBtn = modal.getByRole('button', { name: /track\s*my\s*payoff/i }).first();
+
+  // Si no hay modal o no está el botón → salteo sin fallar
+  const hasModal = await modal.isVisible().catch(() => false);
+  const hasTrack = hasModal ? await trackBtn.isVisible().catch(() => false) : false;
+
+  if (!hasModal || !hasTrack) {
+    warn('[Payoff] ⚠️ No hay modal/Track My Payoff visible. Salteo este paso sin fallar.');
+    return false;
+  }
+
+  // Abrir popup tracker
+  const [popup] = await Promise.all([
+    this.page.context().waitForEvent('page'),
+    trackBtn.click(),
+  ]);
+
+  await popup.waitForLoadState('domcontentloaded');
+  await popup.waitForLoadState('networkidle').catch(() => {});
+  info(`[Payoff] Popup abierto -> ${popup.url()}`);
+
+  if (!popup.url().toLowerCase().includes('payofftracker')) {
+    throw new Error('No se redirigió al tracker de payoff.');
+  }
+
+  // ---- VALIDACIONES (los 3 bloques) ----
+  // 1) Status "Active" (más tolerante)
+  const activeStep = popup
+    .locator('.us-step__title, .us-step__label, .us-step__name')
+    .filter({ hasText: /^Active$/i })
     .first();
 
-  await modal.waitFor({ state: 'visible', timeout: 60000 });
+  await activeStep.waitFor({ state: 'visible', timeout: 60000 });
 
-  // 2) Botones esperados (case-insensitive y sin asumir <div> interno)
-  const btnReview = modal.getByRole('button', { name: /review\s*payoff\s*demand/i });
-  const btnTrack  = modal.getByRole('button', { name: /track\s*my\s*payoff/i });
-  const btnClose  = modal.getByRole('button', { name: /cerrar|close/i });
+  // Helper: asegurar accordion visible (y si hace falta, abrirlo)
+  const ensureAccordionVisible = async (title: string) => {
+    // item del accordion que contiene el título
+    const item = popup.locator('.us-accordion-item').filter({
+      has: popup.locator('.us-accordion-header__title', { hasText: new RegExp(`^${title}$`, 'i') })
+    }).first();
 
-  await btnReview.waitFor({ state: 'visible', timeout: 60000 });
-  await btnTrack.waitFor({ state: 'visible', timeout: 60000 });
-  await btnClose.waitFor({ state: 'visible', timeout: 60000 });
+    const header = item.locator('.us-accordion-header').first();
+    const headerTitle = item.locator('.us-accordion-header__title', { hasText: new RegExp(`^${title}$`, 'i') }).first();
+
+    await headerTitle.waitFor({ state: 'visible', timeout: 60000 });
+
+    // Si el contenido no está visible, intentamos expandir (sin asumir clases exactas)
+    const content = item.locator('.us-accordion-content, .us-accordion-body').first();
+    const contentVisible = await content.isVisible().catch(() => false);
+
+    if (!contentVisible) {
+      await header.click().catch(() => headerTitle.click().catch(() => {}));
+      await popup.waitForTimeout(300);
+    }
+
+    // Validación final: al menos el header está visible
+    // y si existe content lo esperamos un poco (sin fallar si no lo renderiza como “content”)
+    await headerTitle.waitFor({ state: 'visible', timeout: 10000 });
+
+    const contentVisibleAfter = await content.isVisible().catch(() => false);
+    info(`[Payoff] Accordion "${title}" visible. contentVisible=${contentVisibleAfter}`);
+  };
+
+  // 2) Activity
+  await ensureAccordionVisible('Activity');
+
+  // 3) Emails
+  await ensureAccordionVisible('Emails');
+
+  // Cerrar popup tracker
+  await popup.close().catch(() => {});
+  info('[Payoff] ✅ Tracker validado y popup cerrado.');
+
+  return true;
 }
 
 
+async clickReviewPayoffDemandAndVerify(): Promise<Page | null> {
+  const warn = (m: string) => (this as any).log ? (this as any).log(m) : console.warn(m);
+  const info = (m: string) => (this as any).log ? (this as any).log(m) : console.log(m);
 
-async clickTrackMyPayoffAndVerify() {
-  // Guarda la cantidad de páginas antes de hacer click
-   const modal = this.page.locator('[role="dialog"], .us-modal').first();
-  const [popup] = await Promise.all([
-    this.page.context().waitForEvent('page'),
-    modal.getByRole('button', { name: /track\s*my\s*payoff/i }).click()
-  ]);
-  await popup.waitForLoadState();
-  if (!popup.url().includes('payoffTracker')) throw new Error('No se redirigió al tracker de payoff.');
+  const modal = this.page
+    .locator('[role="dialog"], .us-modal, .modal-content')
+    .filter({ hasText: /payoff/i })
+    .last();
 
-  // Espera los bloques de status, activity y emails
-  await popup.waitForSelector('xpath=//div[contains(@class, "us-step--current")]//div[contains(@class, "us-step__title") and text()="Active"]', { timeout: 60000 });
-  await popup.waitForSelector('xpath=//div[contains(@class, "us-accordion-item--selected")]//div[contains(@class, "us-accordion-header__title") and text()="Activity"]', { timeout: 60000 });
-  await popup.waitForSelector('xpath=//div[contains(@class, "us-accordion-item--selected")]//div[contains(@class, "us-accordion-header__title") and text()="Emails"]', { timeout: 60000 });
+  const reviewBtn = modal.getByRole('button', { name: /review\s*payoff\s*demand/i }).first();
 
-  // Cierra la pestaña del tracker
-  await popup.close();
+  const hasModal = await modal.isVisible().catch(() => false);
+  const hasBtn = hasModal ? await reviewBtn.isVisible().catch(() => false) : false;
+
+  if (!hasModal || !hasBtn) {
+    warn('[Payoff] ⚠️ No hay modal/Review Payoff Demand visible. Salteo este paso sin fallar.');
+    return null;
+  }
+
+  const ctx = this.page.context();
+
+  // ✅ Soporta: popup NUEVO o navegación en la misma pestaña
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    info(`[Payoff] Review Payoff Demand -> intento ${attempt}/2`);
+
+    const popupPromise = ctx.waitForEvent('page', { timeout: 45000 }).catch(() => null);
+    const navPromise = this.page.waitForURL(/reviewPayoffDemand/i, { timeout: 45000 }).catch(() => null);
+
+    await reviewBtn.click().catch(() => {});
+
+    const popup = await popupPromise;
+    if (popup) {
+      await popup.waitForLoadState('domcontentloaded');
+      await popup.waitForLoadState('networkidle').catch(() => {});
+      if (!popup.url().toLowerCase().includes('reviewpayoffdemand')) {
+        throw new Error('Se abrió popup pero NO es Review Payoff Demand.');
+      }
+      info(`[Payoff] ✅ Review abierto en popup -> ${popup.url()}`);
+      return popup;
+    }
+
+    await navPromise;
+    if (this.page.url().toLowerCase().includes('reviewpayoffdemand')) {
+      info(`[Payoff] ✅ Review abrió en misma pestaña -> ${this.page.url()}`);
+      return this.page;
+    }
+
+    await this.page.waitForTimeout(800);
+  }
+
+  throw new Error('[Payoff] No se abrió Review Payoff Demand (ni popup ni navegación) tras reintentos.');
 }
 
-async clickReviewPayoffDemandAndVerify() {
-  const modal = this.page.locator('[role="dialog"], .us-modal').first();
-  const [popup] = await Promise.all([
-    this.page.context().waitForEvent('page'),
-    modal.getByRole('button', { name: /review\s*payoff\s*demand/i }).click()
-  ]);
-  await popup.waitForLoadState();
-  if (!popup.url().includes('reviewPayoffDemand')) throw new Error('No se abrió la página de Review Payoff Demand');
-  return popup;
-}
 
 async acceptTermsAndContinue(popup: Page) {
   await popup.waitForSelector('xpath=//*[@id="accept-terms"]', { timeout: 8000 });

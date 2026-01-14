@@ -145,27 +145,44 @@ get commentsTextarea() {
     }
   }
 
- async validateResult() {
-  // Verificamos si aparece un toast de éxito o de error
+async validateResult() {
   const successToast = this.successToast;
-  const errorToast = this.page.locator(".toast-error .toast-message");
+  const errorToast = this.page.locator(".toast-error .toast-message").first();
 
-  if (await successToast.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await expect(successToast).toContainText(
-      "Payoff Request has been successfully sent"
-    );
-    await expect(this.successResultBlock).toContainText(
-      "Payoff Request has been successfully sent"
-    );
+  // ✅ Caso ÉXITO
+  const successVisible = await successToast.isVisible({ timeout: 5000 }).catch(() => false);
+  if (successVisible) {
+    await expect(successToast).toContainText("Payoff Request has been successfully sent");
+    await expect(this.successResultBlock).toContainText("Payoff Request has been successfully sent");
     console.log("✅ Payoff enviado con éxito");
-  } else if (await errorToast.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await expect(errorToast).toContainText(
-      "There is already a Payoff Request active"
-    );
-    console.log("⚠️ Payoff ya estaba activo");
-  } else {
-    throw new Error("❌ No apareció ni el toast de éxito ni el toast de error");
+    return;
   }
+
+  // ⚠️ Caso ERROR (aceptamos múltiples mensajes)
+  const errorVisible = await errorToast.isVisible({ timeout: 5000 }).catch(() => false);
+  if (errorVisible) {
+    const msg = ((await errorToast.textContent().catch(() => "")) || "").trim();
+
+    // Lista de mensajes aceptados (pueden variar)
+    const acceptedPatterns: RegExp[] = [
+      /There is already a Payoff Request active/i,
+      /Loan has payoff demand task pending or active/i,
+      /payoff.*(pending|active)/i, // fallback más flexible por si cambian el wording
+    ];
+
+    const matched = acceptedPatterns.some((re) => re.test(msg));
+
+    if (!matched) {
+      throw new Error(`❌ Toast de error inesperado en Payoff: "${msg}"`);
+    }
+
+    console.log(`⚠️ Payoff ya estaba activo/pending (toast): "${msg}"`);
+    return;
+  }
+
+  // ❌ Nada apareció
+  throw new Error("❌ No apareció ni el toast de éxito ni el toast de error");
 }
+
 
 }

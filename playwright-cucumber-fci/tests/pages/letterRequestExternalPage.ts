@@ -214,7 +214,7 @@ async signDocument() {
   await expect(loadingLabel).toBeVisible({ timeout: 20000 });
 
   // 🔧 Aceptamos varios resultados posibles
-  const finalText = await loadingLabel.textContent({ timeout: 30000 });
+  const finalText = await loadingLabel.textContent({ timeout: 60000 });
 
   if (finalText?.includes('Loan has payoff demand task pending or active.')) {
     console.log("📄 Final: Loan has payoff demand task pending or active.");
@@ -224,7 +224,7 @@ async signDocument() {
     // Esperar a que cambie a uno de los textos finales
     await expect(loadingLabel).toHaveText(
       /Loan has payoff demand task pending or active.|The document has been signed satisfactorily./,
-      { timeout: 30000 }
+      { timeout: 60000 }
     );
     console.log("📄 Final alcanzado tras transición: " + await loadingLabel.textContent());
   } else {

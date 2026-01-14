@@ -61,8 +61,10 @@ CI=false               # true en pipeline
 RP_ENABLE=true
 
 # IMPORTANTE: usar el puerto expuesto por el gateway (Traefik).
-# Si tu UI abre en http://localhost:8085, entonces:
-RP_ENDPOINT=http://localhost:8085
+# IMPORTANTE: el endpoint debe incluir /api/v1
+RP_ENDPOINT=http://localhost:8080/api/v1
+# (o el puerto que exponga tu gateway)
+
 
 # El proyecto DEBE existir en ReportPortal (por ej: superadmin_personal)
 RP_PROJECT=superadmin_personal
@@ -350,3 +352,120 @@ npx cucumber-js --config cucumber.js
 - ReportPortal: Project → Launches → Launch → Scenario → Logs
 
 ---
+---
+
+## Tags / Suites (convención del equipo)
+
+- `@ui` → Full Regression UI (suite completa)
+- `@smoke` → tests rápidos y muy estables
+- `@wip` → tests inestables / sometidos a cambios frecuentes
+- `@e2e` → flujos end-to-end largos (crear → migrar, etc.)
+- `@ci` → subset ultra estable para GitHub Actions (default)
+
+---
+
+## CI — GitHub Actions (runner self-hosted Windows)
+
+Este repo incluye una pipeline de **GitHub Actions** que ejecuta pruebas en un **runner self-hosted Windows**.
+
+### Qué hace la pipeline
+- Instala dependencias (`npm ci`)
+- Instala browsers (`npx playwright install`)
+- Ejecuta tests con tags `@ci` por defecto
+- Genera:
+  - `reports/junit.xml`
+  - `reports/cucumber-report.json`
+  - evidencias (`reports/screenshots`, `reports/html`, `reports/logs`, `reports/traces`, `reports/videos`)
+  - `allure-results/` + `allure-report/`
+- Sube artifacts descargables:
+  - `reports-and-evidence`
+  - `allure-report` (abrir `index.html`)
+
+### Ejecutar CI en GitHub (manual)
+1) GitHub → **Actions**
+2) Workflow: **E2E - Playwright Cucumber (CI)**
+3) **Run workflow**
+4) Campo `cucumber_tags`:
+   - vacío / default: `@ci`
+   - ejemplos: `@smoke`, `@e2e`, `@ui and not @wip`
+
+### Dónde ver el reporte en GitHub
+En el run del workflow:
+- **Artifacts**:
+  - `reports-and-evidence` → evidencias + junit/json
+  - `allure-report` → abrir `index.html` en tu navegador
+- (Opcional) GitHub Pages si está habilitado (ver sección abajo)
+
+### Ejecutar “modo CI” en local
+**Windows (PowerShell):**
+```powershell
+cd playwright-cucumber-fci
+$env:CI="true"
+$env:HEADLESS="true"
+$env:FRAMEWORK_TYPE="AI"
+$env:RP_ENABLE="false"
+$env:CUCUMBER_TAGS="@ci"
+npm run test:ci:allure
+
+---
+
+## CI — GitHub Actions (runner self-hosted Windows)
+
+Este repo incluye una pipeline de **GitHub Actions** que ejecuta pruebas en un **runner self-hosted Windows**.
+
+### Qué hace la pipeline
+- Instala dependencias (`npm ci`)
+- Instala browsers (`npx playwright install`)
+- Ejecuta tests con tags `@ci` por defecto
+- Genera:
+  - `reports/junit.xml`
+  - `reports/cucumber-report.json`
+  - evidencias (`reports/screenshots`, `reports/html`, `reports/logs`, `reports/traces`, `reports/videos`)
+  - `allure-results/` + `allure-report/`
+- Sube artifacts descargables:
+  - `reports-and-evidence`
+  - `allure-report` (abrir `index.html`)
+
+### Ejecutar CI en GitHub (manual)
+1) GitHub → **Actions**
+2) Workflow: **E2E - Playwright Cucumber (CI)**
+3) **Run workflow**
+4) Campo `cucumber_tags`:
+   - vacío / default: `@ci`
+   - ejemplos: `@smoke`, `@e2e`, `@ui and not @wip`
+
+### Dónde ver el reporte en GitHub
+En el run del workflow:
+- **Artifacts**:
+  - `reports-and-evidence` → evidencias + junit/json
+  - `allure-report` → abrir `index.html` en tu navegador
+- (Opcional) GitHub Pages si está habilitado (ver sección abajo)
+
+### Ejecutar “modo CI” en local
+**Windows (PowerShell):**
+```powershell
+cd playwright-cucumber-fci
+$env:CI="true"
+$env:HEADLESS="true"
+$env:FRAMEWORK_TYPE="AI"
+$env:RP_ENABLE="false"
+$env:CUCUMBER_TAGS="@ci"
+npm run test:ci:allure
+
+
+---
+
+## Troubleshooting — CI (GitHub Actions / runner Windows)
+
+### Error `EBUSY: resource busy or locked`
+Suele pasar en runners Windows por locks (Defender/antivirus o procesos colgados).
+- Reintentar el run
+- Excluir carpeta del runner en Defender/antivirus
+- Verificar que no queden procesos de Node/Playwright abiertos
+
+### “No junit.xml found”
+En CI (con `working-directory`), la ruta típica es:
+- `reports/junit.xml`
+
+### PRs desde forks
+Los forks normalmente **no tienen acceso a secrets**, por eso el workflow suele skippear esos PRs.

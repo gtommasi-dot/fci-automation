@@ -1,4 +1,4 @@
-
+@boardingAiFull
 Feature: Boarding AI Process
   @boardingAi @e2e @wip @ui
   Scenario: Completar los pasos del 1 al 13 del proceso Boarding AI

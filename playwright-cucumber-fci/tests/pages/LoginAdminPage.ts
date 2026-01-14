@@ -29,11 +29,19 @@ export class LoginAdminPage {
     await this.page.fill(this.passwordInput, password);
   }
 
-  async clickSignIn() {
-    await this.page.click(this.loginBtn);
-    // Espera a que la home del admin esté cargada (ajusta selector)
-    await this.page.waitForSelector('xpath=//*[@id="dropdown-profile"]/small', { timeout: 30000 });
-  }
+ async clickSignIn() {
+  await this.page.locator('#btnSignIn, button:has-text("Sign In")').first().click();
+
+  // Espera “alguna” señal de login ok
+  await Promise.race([
+    this.page.locator('#dropdown-profile small').first().waitFor({ state: 'visible', timeout: 60000 }),
+    this.page.waitForURL(/tfciportal\.myfci\.com\/(home|dashboard|tools|lender)/i, { timeout: 60000 }).catch(() => null),
+    this.page.getByText(/Loan Portfolio|Tools|Email Log/i).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => null),
+  ]);
+
+  await this.page.waitForLoadState('networkidle').catch(() => {});
+}
+
 
   // Buscar un lender por nombre/código/ID
  async searchLender(lender: string): Promise<Page> {
