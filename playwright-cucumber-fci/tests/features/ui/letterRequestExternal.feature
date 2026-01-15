@@ -14,8 +14,8 @@ Feature: Letter Request External
 
   Examples:
     | loan      | zip   | tin  | authType  |
-    #  | 399383445 | 02740 | 6789 | Borrower  |
-    #  | 399383478	| 94103 | 6789 | Lender    |
+     | 399383445 | 02740 | 6789 | Borrower  |
+     | 399383478	| 94103 | 6789 | Lender    |
      | 399579695 | 90806 | 6789 | Broker    |
-    #  | 399442479 | 10467 | 6789 | Broker    |
-    #  | 399449073 | 90039 | 6789 | Borrower  |
+     | 399442479 | 10467 | 6789 | Broker    |
+     | 399449073 | 90039 | 6789 | Borrower  |
