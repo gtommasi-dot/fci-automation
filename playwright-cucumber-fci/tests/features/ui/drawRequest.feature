@@ -22,7 +22,7 @@ Feature: Draw Request
       | 399312954  | 2001670         | 200    | Test draw request C  |
       | 399312954  | 2107640         | 300    | Test draw request D  |
 
-  @drawrequestBulk @ui @ci @smoke
+  @drawrequestBulk @ui @smoke
   Scenario: Bulk Draw Request - Cargar archivo y verificar la grilla
     When busco y accedo al lender "gentest" desde admin
     And cierro el popup si está presente
